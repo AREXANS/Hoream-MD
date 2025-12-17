@@ -1,0 +1,4695 @@
+pcall(function()
+        if not game:IsLoaded() then
+            game.Loaded:Wait()
+        end
+    end)
+
+    local HttpService = game:GetService("HttpService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local TeleportService = game:GetService("TeleportService")
+
+    local OreData = nil
+    local OreIndexByName = nil
+    local AutoSellOreNameList = {}
+    do
+        local ok, result = pcall(function()
+            local shared = ReplicatedStorage:WaitForChild("Shared", 10)
+            local dataFolder = shared:WaitForChild("Data", 10)
+            local oreModule = dataFolder:WaitForChild("Ore", 10)
+            return require(oreModule)
+        end)
+        if ok then
+            OreData = result
+            OreIndexByName = {}
+            AutoSellOreNameList = {}
+            for idx, info in pairs(OreData) do
+                local name = info and info.Name
+                if type(name) == "string" and name ~= "" then
+                    OreIndexByName[name] = idx
+                    table.insert(AutoSellOreNameList, name)
+                end
+            end
+            table.sort(AutoSellOreNameList)
+        else
+            warn("[ArexansTools][ForgeHelper] Failed to load Ore data:", result)
+        end
+    end
+
+    local IslandsData = nil
+    do
+        local ok, result = pcall(function()
+            local shared = ReplicatedStorage:WaitForChild("Shared", 10)
+            local dataFolder = shared:WaitForChild("Data", 10)
+            local islandsModule = dataFolder:WaitForChild("Islands", 10)
+            return require(islandsModule)
+        end)
+        if ok then
+            IslandsData = result
+        else
+            warn("[ArexansTools][Teleport] Failed to load Islands data:", result)
+        end
+    end
+
+    local function GetPlayerInventory()
+        local ok, inv = pcall(function()
+            local shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 5)
+            if not shared then
+                return nil
+            end
+            local packages = shared:FindFirstChild("Packages") or shared:WaitForChild("Packages", 5)
+            if not packages then
+                return nil
+            end
+            local knitModule = packages:FindFirstChild("Knit") or packages:WaitForChild("Knit", 5)
+            if not knitModule then
+                return nil
+            end
+            local Knit = require(knitModule)
+            if not Knit or type(Knit.GetController) ~= "function" then
+                return nil
+            end
+            local playerController = Knit.GetController("PlayerController")
+            if not playerController or not playerController.Replica then
+                return nil
+            end
+            local data = playerController.Replica.Data
+            if not data or type(data.Inventory) ~= "table" then
+                return nil
+            end
+            return data.Inventory
+        end)
+
+        if ok and type(inv) == "table" then
+            return inv
+        end
+
+        return nil
+    end
+
+    local function GetPlayerData()
+        local ok, data = pcall(function()
+            local shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 5)
+            if not shared then
+                return nil
+            end
+            local packages = shared:FindFirstChild("Packages") or shared:WaitForChild("Packages", 5)
+            if not packages then
+                return nil
+            end
+            local knitModule = packages:FindFirstChild("Knit") or packages:WaitForChild("Knit", 5)
+            if not knitModule then
+                return nil
+            end
+            local Knit = require(knitModule)
+            if not Knit or type(Knit.GetController) ~= "function" then
+                return nil
+            end
+            local playerController = Knit.GetController("PlayerController")
+            if not playerController or not playerController.Replica then
+                return nil
+            end
+            return playerController.Replica.Data
+        end)
+
+        if ok and type(data) == "table" then
+            return data
+        end
+
+        return nil
+    end
+
+    local function GetPlayerGold()
+        local data = GetPlayerData()
+        if not data then
+            return nil
+        end
+
+        local gold = data.Gold
+        if type(gold) == "table" then
+            if type(gold.Value) == "number" then
+                gold = gold.Value
+            elseif type(gold[1]) == "number" then
+                gold = gold[1]
+            end
+        end
+
+        local n = tonumber(gold)
+        if not n then
+            return nil
+        end
+        return n
+    end
+
+    local function GetPotionCountFromInventory(inv, potionId)
+        if not inv or not potionId then
+            return 0
+        end
+
+        local total = 0
+
+        local direct = inv[potionId]
+        if type(direct) == "number" then
+            total = total + direct
+        elseif type(direct) == "table" then
+            local n = direct.Quantity or direct.Count or direct[1]
+            if type(n) == "number" then
+                total = total + n
+            end
+        end
+
+        local misc = inv.Misc
+        if type(misc) == "table" then
+            for _, item in pairs(misc) do
+                if type(item) == "table" then
+                    local name = item.Name or item.Id or item[1]
+                    if name == potionId then
+                        local n = item.Quantity or item.Count or item[2] or 1
+                        total = total + (tonumber(n) or 0)
+                    end
+                end
+            end
+        end
+
+        return total
+    end
+
+    local RaceData = nil
+    local RaceList = {}
+    local RaceNameToKey = {}
+    local RaceKeyToName = {}
+    do
+        local ok, result = pcall(function()
+            local shared = ReplicatedStorage:WaitForChild("Shared", 10)
+            local dataFolder = shared:WaitForChild("Data", 10)
+            local racesModule = dataFolder:WaitForChild("Races", 10)
+            return require(racesModule)
+        end)
+        if ok and type(result) == "table" then
+            RaceData = result
+            if type(RaceData.Races) == "table" then
+                for key, info in pairs(RaceData.Races) do
+                    local display = (type(info) == "table" and info.Name) or tostring(key)
+                    if type(display) == "string" and display ~= "" then
+                        table.insert(RaceList, display)
+                        RaceNameToKey[display] = key
+                        RaceKeyToName[key] = display
+                    end
+                end
+            end
+        else
+            warn("[ArexansTools][RaceHelper] Failed to load Race data:", result)
+        end
+    end
+
+    if #RaceList == 0 then
+        RaceList = {
+            "Human",
+            "Elf",
+            "Zombie",
+            "Goblin",
+            "Undead",
+            "Orc",
+            "Dwarf",
+            "Shadow",
+            "Minotaur",
+            "Dragonborn",
+            "Golem",
+            "Angel",
+            "Demon",
+        }
+        for _, name in ipairs(RaceList) do
+            RaceNameToKey[name] = name
+        end
+    end
+
+    table.sort(RaceList)
+
+    local function GetRaceSnapshot()
+        local data = GetPlayerData()
+        if not data then
+            return nil
+        end
+
+        local rawRace = data.Race
+        local rawSpins = data.Spins
+
+        if type(rawRace) == "table" then
+            if type(rawRace.Name) == "string" then
+                rawRace = rawRace.Name
+            elseif type(rawRace[1]) == "string" then
+                rawRace = rawRace[1]
+            end
+        end
+
+        if type(rawSpins) == "table" then
+            if type(rawSpins.Value) == "number" then
+                rawSpins = rawSpins.Value
+            elseif type(rawSpins[1]) == "number" then
+                rawSpins = rawSpins[1]
+            end
+        end
+
+        local raceKey = rawRace
+        local spins = tonumber(rawSpins) or 0
+
+        local raceInfo = nil
+        if RaceData and type(RaceData.Races) == "table" and raceKey ~= nil then
+            raceInfo = RaceData.Races[raceKey]
+        end
+
+        local raceName = "None"
+        local rarityName = "Unknown"
+
+        local mappedName = raceKey ~= nil and RaceKeyToName[raceKey] or nil
+        if type(mappedName) == "string" and mappedName ~= "" then
+            raceName = mappedName
+        elseif type(raceKey) == "string" or type(raceKey) == "number" then
+            raceName = tostring(raceKey)
+        end
+
+        if type(raceInfo) == "table" and type(raceInfo.Rarity) == "string" then
+            rarityName = raceInfo.Rarity
+        end
+
+        return {
+            key = raceKey,
+            name = raceName,
+            rarity = rarityName,
+            spins = spins,
+        }
+    end
+
+    local ToolActivatedRF
+    local ForgeServiceRF
+    local DialogueRunCommandRF
+    local DialogueEventRE
+    local ProximityForceDialogueRF
+    local ProximityPurchaseRF
+    local RedeemCodeRF
+    local RaceRerollRF
+    do
+        local ok, err = pcall(function()
+            local shared = ReplicatedStorage:WaitForChild("Shared", 10)
+            local packages = shared and shared:WaitForChild("Packages", 10)
+            local knit = packages and packages:WaitForChild("Knit", 10)
+            local services = knit and knit:WaitForChild("Services", 10)
+            local toolService = services and services:WaitForChild("ToolService", 10)
+            local rf = toolService and toolService:WaitForChild("RF", 10)
+            ToolActivatedRF = rf and rf:WaitForChild("ToolActivated", 10)
+            
+            local forgeService = services and services:WaitForChild("ForgeService", 10)
+            local forgeRF = forgeService and forgeService:WaitForChild("RF", 10)
+            ForgeServiceRF = forgeRF and forgeRF:WaitForChild("ChangeSequence", 10)
+
+            local dialogueService = services and services:WaitForChild("DialogueService", 10)
+            local dialogueRF = dialogueService and dialogueService:WaitForChild("RF", 10)
+            DialogueRunCommandRF = dialogueRF and dialogueRF:WaitForChild("RunCommand", 10)
+            local dialogueREFolder = dialogueService and dialogueService:WaitForChild("RE", 10)
+            DialogueEventRE = dialogueREFolder and dialogueREFolder:WaitForChild("DialogueEvent", 10)
+
+            local proximityService = services and services:WaitForChild("ProximityService", 10)
+            local proximityRF = proximityService and proximityService:WaitForChild("RF", 10)
+            ProximityForceDialogueRF = proximityRF and proximityRF:WaitForChild("ForceDialogue", 10)
+            ProximityPurchaseRF = proximityRF and proximityRF:WaitForChild("Purchase", 10)
+
+            local raceService = services and services:WaitForChild("RaceService", 10)
+            local raceRF = raceService and raceService:WaitForChild("RF", 10)
+            RaceRerollRF = raceRF and raceRF:WaitForChild("Reroll", 10)
+
+            local codeService = services and services:WaitForChild("CodeService", 10)
+            local codeRF = codeService and codeService:WaitForChild("RF", 10)
+            RedeemCodeRF = codeRF and codeRF:WaitForChild("RedeemCode", 10)
+        end)
+
+        if not ok then
+            warn("[ArexansTools][The Forge] Failed to locate RemoteFunctions:", err)
+        end
+    end
+
+    local PotionIdList = {
+        "HealthPotion1",
+        "HealthPotion2",
+        "AttackDamagePotion1",
+        "MovementSpeedPotion1",
+        "MinerPotion1",
+        "LuckPotion1",
+    }
+
+    local PotionUseCooldowns = {
+        HealthPotion1 = 5,
+        HealthPotion2 = 5,
+        AttackDamagePotion1 = 60,
+        MovementSpeedPotion1 = 60,
+        MinerPotion1 = 300,
+        LuckPotion1 = 300,
+    }
+
+    
+-- Arexans Tools Evade
+-- Based on ViolenceDistric UI and Evade Logic
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local StarterPlayer = game:GetService("StarterPlayer")
+local VirtualUser = game:GetService("VirtualUser")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local LP = Players.LocalPlayer
+
+-- // UI Library Implementation //
+local Library = {}
+Library.Flags = {}
+Library.UnloadSignals = {}
+Library.IconDraggable = false -- Default locked
+
+local UIConfig = {
+    MainColor = Color3.fromRGB(2, 6, 23),      -- Slate 950
+    CardColor = Color3.fromRGB(15, 23, 42),    -- Slate 900
+    AccentColor = Color3.fromRGB(59, 130, 246),-- Blue 500
+    TextColor = Color3.fromRGB(226, 232, 240), -- Slate 200
+    SubTextColor = Color3.fromRGB(148, 163, 184), -- Slate 400
+    BorderColor = Color3.fromRGB(30, 41, 59),  -- Slate 800
+    Font = Enum.Font.GothamMedium,
+    FontBold = Enum.Font.GothamBold,
+    
+    -- Extra Mini Settings
+    MainSize = UDim2.new(0, 360, 0, 240),
+    HeaderHeight = 28,
+    SidebarWidth = 85,
+    ElementHeight = 22,
+    FontSizeMain = 9,
+    FontSizeTitle = 11,
+}
+
+local function Create(class, props)
+    local inst = Instance.new(class)
+    for k, v in pairs(props) do
+        if k ~= "Parent" then inst[k] = v end
+    end
+    if props.Parent then inst.Parent = props.Parent end
+    return inst
+end
+
+local function MakeDraggable(topbarobject, object)
+	local Dragging = nil
+	local DragInput = nil
+	local DragStart = nil
+	local StartPosition = nil
+
+	local function Update(input)
+		local Delta = input.Position - DragStart
+		local pos = UDim2.new(StartPosition.X.Scale, StartPosition.X.Offset + Delta.X, StartPosition.Y.Scale, StartPosition.Y.Offset + Delta.Y)
+		object.Position = pos
+	end
+
+	topbarobject.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			Dragging = true
+			DragStart = input.Position
+			StartPosition = object.Position
+
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					Dragging = false
+				end
+			end)
+		end
+	end)
+
+	topbarobject.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			DragInput = input
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if input == DragInput and Dragging then
+			Update(input)
+		end
+	end)
+end
+
+function Library:Unload()
+    for _, signal in ipairs(Library.UnloadSignals) do
+        if typeof(signal) == "function" then
+            pcall(signal)
+        elseif typeof(signal) == "RBXScriptConnection" then
+            signal:Disconnect()
+        end
+    end
+    Library.UnloadSignals = {}
+end
+
+function Library:CreateWindow(options)
+    local Name = options.Name or "Arexans Tools"
+    local Subtitle = options.Subtitle or "Evade"
+    
+    local ScreenGui = Create("ScreenGui", {
+        Name = "ArexansToolsUI",
+        Parent = CoreGui,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        ResetOnSpawn = false
+    })
+    table.insert(Library.UnloadSignals, function() ScreenGui:Destroy() end)
+
+    -- Toggle Button (Top Right Side Icon) - Very Mini
+    local ToggleBtnFrame = Create("Frame", {
+        Name = "ToggleFrame",
+        Parent = ScreenGui,
+        BackgroundColor3 = UIConfig.CardColor,
+        BackgroundTransparency = 1, -- Fully transparent container
+        AnchorPoint = Vector2.new(0.5, 0.5), -- Center anchor
+        Position = UDim2.new(1, -30, 0, 30), -- Top Right (Shifted Right)
+        Size = UDim2.new(0, 24, 0, 24),
+        ZIndex = 100,
+        ClipsDescendants = false -- Allow border overlay to be visible if needed, but we structure differently
+    })
+    
+    -- The Asset Image (Behind the border)
+    local ToggleBtn = Create("ImageButton", {
+        Parent = ToggleBtnFrame,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        Image = "rbxassetid://122503252139031", -- Updated Shield Icon
+        ImageColor3 = Color3.new(1,1,1),
+        ImageTransparency = 0,
+        ZIndex = 100 -- Lower ZIndex
+    })
+    -- Rounding the image
+    Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = ToggleBtn}) -- Smaller radius "agak mengkotak"
+
+    -- The Border Overlay (In front of the image)
+    local BorderOverlay = Create("Frame", {
+        Parent = ToggleBtnFrame,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        ZIndex = 101 -- Higher ZIndex to overlay image
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = BorderOverlay}) -- Match image radius
+    Create("UIStroke", {
+        Color = UIConfig.AccentColor, 
+        Thickness = 2.5, -- Thicker "tebal"
+        Parent = BorderOverlay,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    })
+    
+    -- Adjust padding if needed
+    Create("UIPadding", {Parent = ToggleBtn, PaddingTop = UDim.new(0, 0), PaddingBottom = UDim.new(0, 0), PaddingLeft = UDim.new(0, 0), PaddingRight = UDim.new(0, 0)})
+
+    local MainFrame = Create("Frame", {
+        Name = "MainFrame",
+        Parent = ScreenGui,
+        BackgroundColor3 = UIConfig.MainColor,
+        BackgroundTransparency = 0.25,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0.5, -180, 0.5, -120),
+        Size = UIConfig.MainSize,
+        ClipsDescendants = true,
+        Visible = true
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = MainFrame})
+    Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = MainFrame})
+
+    -- Drag Logic for Icon
+    local iconDragging = false
+    local iconDragStart = nil
+    local iconStartPos = nil
+
+    ToggleBtn.InputBegan:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and Library.IconDraggable then
+            iconDragging = true
+            iconDragStart = input.Position
+            iconStartPos = ToggleBtnFrame.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if iconDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - iconDragStart
+            ToggleBtnFrame.Position = UDim2.new(
+                iconStartPos.X.Scale, 
+                iconStartPos.X.Offset + delta.X, 
+                iconStartPos.Y.Scale, 
+                iconStartPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    ToggleBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            iconDragging = false
+        end
+    end)
+
+    -- Toggle Click Logic
+    ToggleBtn.MouseButton1Click:Connect(function()
+        MainFrame.Visible = not MainFrame.Visible
+        
+        -- Animation feedback
+        TweenService:Create(ToggleBtnFrame, TweenInfo.new(0.1), {Size = UDim2.new(0,20,0,20)}):Play()
+        task.delay(0.1, function() TweenService:Create(ToggleBtnFrame, TweenInfo.new(0.2), {Size = UDim2.new(0,24,0,24)}):Play() end)
+    end)
+    
+    -- Background Gradient (Subtle)
+    Create("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, UIConfig.MainColor),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 15, 40))
+        }),
+        Rotation = 45,
+        Parent = MainFrame
+    })
+
+    -- Header
+    local Header = Create("Frame", {
+        Name = "Header",
+        Parent = MainFrame,
+        BackgroundColor3 = Color3.new(0,0,0),
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, UIConfig.HeaderHeight),
+    })
+    MakeDraggable(Header, MainFrame)
+    
+    local TitleLabel = Create("TextLabel", {
+        Parent = Header,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 10, 0, 0),
+        Size = UDim2.new(0, 200, 1, 0),
+        Font = UIConfig.FontBold,
+        Text = Name .. " <font color=\"rgb(148,163,184)\" size=\"9\">" .. Subtitle .. "</font>",
+        TextColor3 = UIConfig.AccentColor,
+        TextSize = UIConfig.FontSizeTitle,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        RichText = true
+    })
+
+    local LogoutButton = Create("TextButton", {
+        Parent = Header,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(1, -56, 0, 0),
+        Size = UDim2.new(0, 28, 0, 28),
+        Font = UIConfig.FontBold,
+        Text = "[->", -- Custom Icon
+        TextColor3 = Color3.fromRGB(239, 68, 68), -- Red-500
+        TextSize = 12
+    })
+    LogoutButton.MouseButton1Click:Connect(function() 
+        Library:Unload() 
+    end)
+
+    local CloseButton = Create("TextButton", {
+        Parent = Header,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(1, -28, 0, 0),
+        Size = UDim2.new(0, 28, 0, 28),
+        Font = UIConfig.FontBold,
+        Text = "X",
+        TextColor3 = UIConfig.SubTextColor,
+        TextSize = 12
+    })
+    CloseButton.MouseButton1Click:Connect(function() 
+        MainFrame.Visible = false 
+    end)
+
+    -- Container
+    local Container = Create("Frame", {
+        Parent = MainFrame,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 0, 0, UIConfig.HeaderHeight),
+        Size = UDim2.new(1, 0, 1, -UIConfig.HeaderHeight)
+    })
+
+    -- Sidebar
+    local Sidebar = Create("ScrollingFrame", {
+        Parent = Container,
+        BackgroundColor3 = UIConfig.CardColor,
+        BackgroundTransparency = 0.6,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 5, 0, 0),
+        Size = UDim2.new(0, UIConfig.SidebarWidth, 1, -5),
+        ScrollBarThickness = 1,
+        ScrollBarImageColor3 = UIConfig.AccentColor
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Sidebar})
+    Create("UIListLayout", {
+        Parent = Sidebar,
+        Padding = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Top
+    })
+    Create("UIPadding", {Parent = Sidebar, PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4)})
+
+    -- Content Area
+    local ContentArea = Create("Frame", {
+        Parent = Container,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, UIConfig.SidebarWidth + 10, 0, 0),
+        Size = UDim2.new(1, -(UIConfig.SidebarWidth + 15), 1, -5)
+    })
+
+    local Tabs = {}
+    local FirstTab = true
+
+    local WindowObj = {}
+
+    function WindowObj:CreateTab(name)
+        local TabButton = Create("TextButton", {
+            Parent = Sidebar,
+            BackgroundColor3 = UIConfig.CardColor,
+            BackgroundTransparency = 1, -- Selected: 0
+            Size = UDim2.new(0, UIConfig.SidebarWidth - 6, 0, 20),
+            Font = UIConfig.Font,
+            Text = name,
+            TextColor3 = UIConfig.SubTextColor, -- Selected: White
+            TextSize = 9,
+            AutoButtonColor = false
+        })
+        Create("UICorner", {CornerRadius = UDim.new(0, 3), Parent = TabButton})
+        
+        local TabFrame = Create("ScrollingFrame", {
+            Parent = ContentArea,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 1, 0),
+            ScrollBarThickness = 2,
+            ScrollBarImageColor3 = UIConfig.AccentColor,
+            Visible = false
+        })
+        Create("UIListLayout", {
+            Parent = TabFrame,
+            Padding = UDim.new(0, 3),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center
+        })
+        Create("UIPadding", {Parent = TabFrame, PaddingTop = UDim.new(0,2), PaddingBottom = UDim.new(0,5), PaddingLeft = UDim.new(0, 2), PaddingRight = UDim.new(0, 2)})
+
+        local function Select()
+            for _, t in pairs(Tabs) do
+                t.Button.BackgroundTransparency = 1
+                t.Button.TextColor3 = UIConfig.SubTextColor
+                t.Frame.Visible = false
+            end
+            TabButton.BackgroundTransparency = 0.7
+            TabButton.TextColor3 = UIConfig.AccentColor
+            TabFrame.Visible = true
+        end
+
+        TabButton.MouseButton1Click:Connect(Select)
+
+        if FirstTab then
+            FirstTab = false
+            Select()
+        end
+
+        table.insert(Tabs, {Button = TabButton, Frame = TabFrame})
+
+        local TabObj = {}
+
+        function TabObj:CreateSection(text)
+            local SectionLabel = Create("TextLabel", {
+                Parent = TabFrame,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 16),
+                Font = UIConfig.FontBold,
+                Text = text:upper(),
+                TextColor3 = UIConfig.SubTextColor,
+                TextSize = 8,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+            Create("UIPadding", {Parent = SectionLabel, PaddingLeft = UDim.new(0, 2)})
+        end
+        
+        function TabObj:CreateLabel(text)
+             local LabelFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight - 4)
+            })
+            
+            local Label = Create("TextLabel", {
+                Parent = LabelFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(1, -12, 1, 0),
+                Font = UIConfig.Font,
+                Text = text,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextWrapped = true,
+                RichText = true
+            })
+        end
+
+        function TabObj:CreateToggle(opts)
+            local ToggleName = opts.Name or opts.Label
+            local Default = opts.CurrentValue or false
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+
+            local State = Default
+            if Flag and Library.Flags[Flag] ~= nil then State = Library.Flags[Flag] end
+
+            local ToggleFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = ToggleFrame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = ToggleFrame})
+
+            local Label = Create("TextLabel", {
+                Parent = ToggleFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.7, 0, 1, 0),
+                Font = UIConfig.Font,
+                Text = ToggleName,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local ToggleBtn = Create("TextButton", {
+                Parent = ToggleFrame,
+                BackgroundColor3 = State and UIConfig.AccentColor or Color3.fromRGB(30, 41, 59),
+                Position = UDim2.new(1, -32, 0.5, -6),
+                Size = UDim2.new(0, 26, 0, 12),
+                Text = "",
+                AutoButtonColor = false
+            })
+            Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = ToggleBtn})
+
+            local Dot = Create("Frame", {
+                Parent = ToggleBtn,
+                BackgroundColor3 = Color3.new(1,1,1),
+                Position = State and UDim2.new(1, -10, 0.5, -4) or UDim2.new(0, 2, 0.5, -4),
+                Size = UDim2.new(0, 8, 0, 8)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Dot})
+
+            local function Update()
+                TweenService:Create(ToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = State and UIConfig.AccentColor or Color3.fromRGB(30, 41, 59)}):Play()
+                TweenService:Create(Dot, TweenInfo.new(0.2), {Position = State and UDim2.new(1, -10, 0.5, -4) or UDim2.new(0, 2, 0.5, -4)}):Play()
+                if Flag then Library.Flags[Flag] = State end
+                Callback(State)
+            end
+
+            ToggleBtn.MouseButton1Click:Connect(function()
+                State = not State
+                Update()
+            end)
+
+            Update() -- Visual sync
+            
+            local ToggleObj = {}
+            function ToggleObj:Set(val)
+                State = val
+                Update()
+            end
+            return ToggleObj
+        end
+
+        function TabObj:CreateSlider(opts)
+            local SliderName = opts.Name or opts.Label
+            local Min, Max = opts.Range[1], opts.Range[2]
+            local Default = opts.CurrentValue or Min
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+            local Increment = opts.Increment or 1
+            local Suffix = opts.Suffix or ""
+
+            local Value = Default
+            if Flag and Library.Flags[Flag] ~= nil then Value = Library.Flags[Flag] end
+
+            local SliderFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, 32)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = SliderFrame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = SliderFrame})
+
+            local Label = Create("TextLabel", {
+                Parent = SliderFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 3),
+                Size = UDim2.new(0.7, 0, 0, 12),
+                Font = UIConfig.Font,
+                Text = SliderName,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local ValLabel = Create("TextLabel", {
+                Parent = SliderFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(1, -45, 0, 3),
+                Size = UDim2.new(0, 40, 0, 12),
+                Font = UIConfig.Font,
+                Text = tostring(Value) .. Suffix,
+                TextColor3 = UIConfig.AccentColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Right
+            })
+
+            local SliderBar = Create("Frame", {
+                Parent = SliderFrame,
+                BackgroundColor3 = Color3.fromRGB(30, 41, 59),
+                Position = UDim2.new(0, 6, 0, 20),
+                Size = UDim2.new(1, -12, 0, 3)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = SliderBar})
+
+            local Fill = Create("Frame", {
+                Parent = SliderBar,
+                BackgroundColor3 = UIConfig.AccentColor,
+                Size = UDim2.new((Value - Min)/(Max - Min), 0, 1, 0)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Fill})
+
+            local DragBtn = Create("TextButton", {
+                Parent = SliderBar,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = ""
+            })
+
+            local Dragging = false
+
+            local function Update(input)
+                local SizeX = SliderBar.AbsoluteSize.X
+                local PosX = SliderBar.AbsolutePosition.X
+                local InputX = input.Position.X
+                local Percent = math.clamp((InputX - PosX) / SizeX, 0, 1)
+                local NewVal = Min + (Max - Min) * Percent
+                NewVal = math.floor(NewVal / Increment + 0.5) * Increment
+                Value = NewVal
+                
+                Fill.Size = UDim2.new((Value - Min)/(Max - Min), 0, 1, 0)
+                ValLabel.Text = tostring(Value) .. Suffix
+                if Flag then Library.Flags[Flag] = Value end
+                Callback(Value)
+            end
+
+            DragBtn.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    Dragging = true
+                    Update(input)
+                end
+            end)
+
+            UserInputService.InputChanged:Connect(function(input)
+                if Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    Update(input)
+                end
+            end)
+
+            UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    Dragging = false
+                end
+            end)
+        end
+        
+        function TabObj:CreateDropdown(opts)
+            local DropdownName = opts.Name or opts.Label
+            local Options = opts.Options or {}
+            local CurrentOption = opts.CurrentOption or opts.Default or Options[1] or ""
+            if type(CurrentOption) == "table" then CurrentOption = CurrentOption[1] end
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+
+            local Open = false
+
+            local DropFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight),
+                ClipsDescendants = true
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = DropFrame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = DropFrame})
+
+            local Label = Create("TextLabel", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.5, 0, 0, UIConfig.ElementHeight),
+                Font = UIConfig.Font,
+                Text = DropdownName,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local SelectedLabel = Create("TextLabel", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0.5, 0, 0, 0),
+                Size = UDim2.new(0.5, -20, 0, UIConfig.ElementHeight),
+                Font = UIConfig.Font,
+                Text = tostring(CurrentOption),
+                TextColor3 = UIConfig.AccentColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Right
+            })
+
+            local Arrow = Create("TextLabel", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(1, -20, 0, 0),
+                Size = UDim2.new(0, 20, 0, UIConfig.ElementHeight),
+                Font = UIConfig.FontBold,
+                Text = "+",
+                TextColor3 = UIConfig.SubTextColor,
+                TextSize = 10
+            })
+
+            local Button = Create("TextButton", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight),
+                Text = ""
+            })
+
+            local OptionContainer = Create("ScrollingFrame", {
+                Parent = DropFrame,
+                BackgroundColor3 = Color3.fromRGB(30, 41, 59),
+                BackgroundTransparency = 0.5,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0, 4, 0, UIConfig.ElementHeight + 2),
+                Size = UDim2.new(1, -8, 0, 0),
+                ScrollBarThickness = 2,
+                ScrollBarImageColor3 = UIConfig.AccentColor,
+                Visible = false
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = OptionContainer})
+            Create("UIListLayout", {
+                Parent = OptionContainer,
+                Padding = UDim.new(0, 1),
+                SortOrder = Enum.SortOrder.LayoutOrder
+            })
+            
+            local function RefreshOptions()
+                for _, child in ipairs(OptionContainer:GetChildren()) do
+                    if child:IsA("TextButton") then child:Destroy() end
+                end
+                
+                for _, opt in ipairs(Options) do
+                    local OptBtn = Create("TextButton", {
+                        Parent = OptionContainer,
+                        BackgroundColor3 = UIConfig.CardColor,
+                        BackgroundTransparency = 0.8,
+                        Size = UDim2.new(1, 0, 0, 18),
+                        Font = UIConfig.Font,
+                        Text = tostring(opt),
+                        TextColor3 = (tostring(opt) == tostring(CurrentOption)) and UIConfig.AccentColor or UIConfig.TextColor,
+                        TextSize = UIConfig.FontSizeMain,
+                        AutoButtonColor = true
+                    })
+                    Create("UICorner", {CornerRadius = UDim.new(0, 2), Parent = OptBtn})
+                    
+                    OptBtn.MouseButton1Click:Connect(function()
+                        CurrentOption = opt
+                        SelectedLabel.Text = tostring(CurrentOption)
+                        if Flag then Library.Flags[Flag] = CurrentOption end
+                        Callback(CurrentOption) -- Passing as table to match Rayfield logic in Evade.lua
+                        
+                        Open = false
+                        Arrow.Text = "+"
+                        OptionContainer.Visible = false
+                        TweenService:Create(DropFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)}):Play()
+                        
+                         for _, child in ipairs(OptionContainer:GetChildren()) do
+                            if child:IsA("TextButton") then
+                                child.TextColor3 = (child.Text == tostring(CurrentOption)) and UIConfig.AccentColor or UIConfig.TextColor
+                            end
+                        end
+                    end)
+                end
+                OptionContainer.CanvasSize = UDim2.new(0, 0, 0, #Options * 19)
+            end
+
+            Button.MouseButton1Click:Connect(function()
+                Open = not Open
+                Arrow.Text = Open and "-" or "+"
+                if Open then
+                    RefreshOptions()
+                    OptionContainer.Visible = true
+                    local listHeight = math.min(5 * 19, #Options * 19) + 4
+                    TweenService:Create(DropFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight + listHeight + 4)}):Play()
+                    TweenService:Create(OptionContainer, TweenInfo.new(0.2), {Size = UDim2.new(1, -8, 0, listHeight)}):Play()
+                else
+                    OptionContainer.Visible = false
+                    TweenService:Create(DropFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)}):Play()
+                end
+            end)
+            
+            if Flag then Library.Flags[Flag] = CurrentOption end
+        end
+
+        function TabObj:CreateButton(opts)
+            local ButtonName = opts.Name or opts.Label
+            local Callback = opts.Callback or function() end
+
+            local BtnFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, 22)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = BtnFrame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = BtnFrame})
+
+            local Btn = Create("TextButton", {
+                Parent = BtnFrame,
+                BackgroundColor3 = UIConfig.AccentColor,
+                BackgroundTransparency = 0.8,
+                Size = UDim2.new(1, 0, 1, 0),
+                Font = UIConfig.FontBold,
+                Text = ButtonName,
+                TextColor3 = UIConfig.AccentColor,
+                TextSize = UIConfig.FontSizeMain,
+                AutoButtonColor = true
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Btn})
+
+            Btn.MouseButton1Click:Connect(function()
+                TweenService:Create(Btn, TweenInfo.new(0.1), {BackgroundTransparency = 0.5}):Play()
+                task.delay(0.1, function() TweenService:Create(Btn, TweenInfo.new(0.3), {BackgroundTransparency = 0.8}):Play() end)
+                Callback()
+            end)
+        end
+
+        function TabObj:CreateColorPicker(opts)
+            local Name = opts.Name or opts.Label
+            local Default = opts.Color or Color3.new(1,1,1)
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+
+            local ColorVal = Default
+            if Flag and Library.Flags[Flag] ~= nil and typeof(Library.Flags[Flag])=="Color3" then ColorVal = Library.Flags[Flag] end
+
+            local PickerFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight),
+                ClipsDescendants = true
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = PickerFrame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = PickerFrame})
+
+            local Label = Create("TextLabel", {
+                Parent = PickerFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.7, 0, 0, UIConfig.ElementHeight),
+                Font = UIConfig.Font,
+                Text = Name,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local Preview = Create("TextButton", {
+                Parent = PickerFrame,
+                BackgroundColor3 = ColorVal,
+                Position = UDim2.new(1, -32, 0.5, -6),
+                Size = UDim2.new(0, 26, 0, 12),
+                Text = ""
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 3), Parent = Preview})
+
+            local Expanded = false
+            local SliderContainer = Create("Frame", {
+                Parent = PickerFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 0, 0, UIConfig.ElementHeight),
+                Size = UDim2.new(1, 0, 0, 50)
+            })
+
+            local function CreateRGBSlider(y, c)
+                local SFrame = Create("Frame", {
+                    Parent = SliderContainer,
+                    BackgroundTransparency = 1,
+                    Position = UDim2.new(0, 8, 0, y),
+                    Size = UDim2.new(1, -16, 0, 12)
+                })
+                local Bar = Create("Frame", {
+                    Parent = SFrame,
+                    BackgroundColor3 = Color3.fromRGB(30, 41, 59),
+                    Position = UDim2.new(0, 0, 0.5, -1),
+                    Size = UDim2.new(1, 0, 0, 2)
+                })
+                Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Bar})
+                local Fill = Create("Frame", {
+                    Parent = Bar,
+                    BackgroundColor3 = (c=="R" and Color3.new(1,0,0)) or (c=="G" and Color3.new(0,1,0)) or Color3.new(0,0,1),
+                    Size = UDim2.new(0, 0, 1, 0)
+                })
+                local Btn = Create("TextButton", {
+                    Parent = SFrame,
+                    BackgroundTransparency = 1,
+                    Size = UDim2.new(1, 0, 1, 0),
+                    Text = ""
+                })
+                return Btn, Fill
+            end
+
+            local RBtn, RFill = CreateRGBSlider(4, "R")
+            local GBtn, GFill = CreateRGBSlider(20, "G")
+            local BBtn, BFill = CreateRGBSlider(36, "B")
+
+            local function UpdateVisuals()
+                Preview.BackgroundColor3 = ColorVal
+                RFill.Size = UDim2.new(ColorVal.R, 0, 1, 0)
+                GFill.Size = UDim2.new(ColorVal.G, 0, 1, 0)
+                BFill.Size = UDim2.new(ColorVal.B, 0, 1, 0)
+            end
+            UpdateVisuals()
+
+            local function UpdateColor()
+                Preview.BackgroundColor3 = ColorVal
+                if Flag then Library.Flags[Flag] = ColorVal end
+                Callback(ColorVal)
+            end
+
+            local function HandleSlide(input, comp)
+                local bar = (comp=="R" and RBtn) or (comp=="G" and GBtn) or BBtn
+                local pct = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+                local r, g, b = ColorVal.R, ColorVal.G, ColorVal.B
+                if comp == "R" then r = pct elseif comp == "G" then g = pct else b = pct end
+                ColorVal = Color3.new(r,g,b)
+                UpdateVisuals()
+                UpdateColor()
+            end
+
+            local function BindSlide(btn, comp)
+                local dragging = false
+                btn.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true HandleSlide(input, comp) end
+                end)
+                UserInputService.InputChanged:Connect(function(input)
+                    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then HandleSlide(input, comp) end
+                end)
+                UserInputService.InputEnded:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+                end)
+            end
+            BindSlide(RBtn, "R"); BindSlide(GBtn, "G"); BindSlide(BBtn, "B")
+
+            Preview.MouseButton1Click:Connect(function()
+                Expanded = not Expanded
+                if Expanded then
+                    TweenService:Create(PickerFrame, TweenInfo.new(0.3), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight + 50)}):Play()
+                else
+                    TweenService:Create(PickerFrame, TweenInfo.new(0.3), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)}):Play()
+                end
+            end)
+        end
+
+        
+        function TabObj:CreateTextBox(opts)
+            local Name = opts.Name or opts.Label
+            local Default = opts.Default or ""
+            local Placeholder = opts.Placeholder or ""
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+
+            local Value = Default
+            if Flag and Library.Flags[Flag] ~= nil then Value = Library.Flags[Flag] end
+
+            local Frame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, 32)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Frame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = Frame})
+
+            local Label = Create("TextLabel", {
+                Parent = Frame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.6, 0, 1, 0),
+                Font = UIConfig.Font,
+                Text = Name,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local BoxBackground = Create("Frame", {
+                Parent = Frame,
+                BackgroundColor3 = Color3.fromRGB(30, 41, 59),
+                Position = UDim2.new(0.6, -5, 0.5, -10),
+                Size = UDim2.new(0.4, 0, 0, 20)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = BoxBackground})
+
+            local Box = Create("TextBox", {
+                Parent = BoxBackground,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, -8, 1, 0),
+                Position = UDim2.new(0, 4, 0, 0),
+                Font = UIConfig.Font,
+                Text = Value,
+                PlaceholderText = Placeholder,
+                TextColor3 = UIConfig.AccentColor,
+                PlaceholderColor3 = UIConfig.SubTextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ClearTextOnFocus = false
+            })
+
+            Box.FocusLost:Connect(function(enter)
+                Value = Box.Text
+                if Flag then Library.Flags[Flag] = Value end
+                Callback(Value)
+            end)
+            
+            if Flag then Library.Flags[Flag] = Value end
+            
+            local Obj = {}
+            function Obj:Set(v)
+                Box.Text = v
+                Value = v
+                if Flag then Library.Flags[Flag] = Value end
+                Callback(Value)
+            end
+            return Obj
+        end
+
+        function TabObj:CreateMultiDropdown(opts)
+            local DropdownName = opts.Name or opts.Label
+            local Options = opts.Options or {}
+            local Default = opts.Default or {}
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+
+            local Selected = {}
+            if type(Default) == "table" then
+                for _, v in ipairs(Default) do Selected[v] = true end
+            end
+
+            local Open = false
+
+            local DropFrame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight),
+                ClipsDescendants = true
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = DropFrame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = DropFrame})
+
+            local Label = Create("TextLabel", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.5, 0, 0, UIConfig.ElementHeight),
+                Font = UIConfig.Font,
+                Text = DropdownName,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local function GetSelectedText()
+                local list = {}
+                for k, v in pairs(Selected) do if v then table.insert(list, k) end end
+                if #list == 0 then return "..." end
+                if #list == 1 then return tostring(list[1]) end
+                return #list .. " selected"
+            end
+
+            local SelectedLabel = Create("TextLabel", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0.5, 0, 0, 0),
+                Size = UDim2.new(0.5, -20, 0, UIConfig.ElementHeight),
+                Font = UIConfig.Font,
+                Text = GetSelectedText(),
+                TextColor3 = UIConfig.AccentColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Right
+            })
+
+            local Arrow = Create("TextLabel", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(1, -20, 0, 0),
+                Size = UDim2.new(0, 20, 0, UIConfig.ElementHeight),
+                Font = UIConfig.FontBold,
+                Text = "+",
+                TextColor3 = UIConfig.SubTextColor,
+                TextSize = 10
+            })
+
+            local Button = Create("TextButton", {
+                Parent = DropFrame,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight),
+                Text = ""
+            })
+
+            local OptionContainer = Create("ScrollingFrame", {
+                Parent = DropFrame,
+                BackgroundColor3 = Color3.fromRGB(30, 41, 59),
+                BackgroundTransparency = 0.5,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0, 4, 0, UIConfig.ElementHeight + 2),
+                Size = UDim2.new(1, -8, 0, 0),
+                ScrollBarThickness = 2,
+                ScrollBarImageColor3 = UIConfig.AccentColor,
+                Visible = false
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = OptionContainer})
+            Create("UIListLayout", {
+                Parent = OptionContainer,
+                Padding = UDim.new(0, 1),
+                SortOrder = Enum.SortOrder.LayoutOrder
+            })
+            
+            local function RefreshOptions()
+                for _, child in ipairs(OptionContainer:GetChildren()) do
+                    if child:IsA("TextButton") then child:Destroy() end
+                end
+                
+                for _, opt in ipairs(Options) do
+                    local isSelected = Selected[opt] == true
+                    local OptBtn = Create("TextButton", {
+                        Parent = OptionContainer,
+                        BackgroundColor3 = UIConfig.CardColor,
+                        BackgroundTransparency = 0.8,
+                        Size = UDim2.new(1, 0, 0, 18),
+                        Font = UIConfig.Font,
+                        Text = tostring(opt),
+                        TextColor3 = isSelected and UIConfig.AccentColor or UIConfig.TextColor,
+                        TextSize = UIConfig.FontSizeMain,
+                        AutoButtonColor = true
+                    })
+                    Create("UICorner", {CornerRadius = UDim.new(0, 2), Parent = OptBtn})
+                    
+                    OptBtn.MouseButton1Click:Connect(function()
+                        Selected[opt] = not Selected[opt]
+                        SelectedLabel.Text = GetSelectedText()
+                        
+                        OptBtn.TextColor3 = Selected[opt] and UIConfig.AccentColor or UIConfig.TextColor
+                        
+                        local sList = {}
+                        for k, v in pairs(Selected) do if v then table.insert(sList, k) end end
+                        if Flag then Library.Flags[Flag] = sList end
+                        Callback(sList)
+                    end)
+                end
+                OptionContainer.CanvasSize = UDim2.new(0, 0, 0, #Options * 19)
+            end
+
+            Button.MouseButton1Click:Connect(function()
+                Open = not Open
+                Arrow.Text = Open and "-" or "+"
+                if Open then
+                    RefreshOptions()
+                    OptionContainer.Visible = true
+                    local listHeight = math.min(5 * 19, #Options * 19) + 4
+                    TweenService:Create(DropFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight + listHeight + 4)}):Play()
+                    TweenService:Create(OptionContainer, TweenInfo.new(0.2), {Size = UDim2.new(1, -8, 0, listHeight)}):Play()
+                else
+                    OptionContainer.Visible = false
+                    TweenService:Create(DropFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)}):Play()
+                end
+            end)
+            
+            if Flag then Library.Flags[Flag] = Default end
+        end
+
+        function TabObj:CreateKeybind(opts)
+            local Name = opts.Name or opts.Label
+            local Default = opts.Default or Enum.KeyCode.RightShift
+            local Flag = opts.Flag or opts.Key
+            local Callback = opts.Callback or function() end
+
+            if type(Default) == "string" then
+                Default = Enum.KeyCode[Default] or Enum.KeyCode.RightShift
+            end
+
+            local Value = Default
+            if Flag and Library.Flags[Flag] ~= nil then Value = Library.Flags[Flag] end
+
+            local Frame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Frame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = Frame})
+
+            local Label = Create("TextLabel", {
+                Parent = Frame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.6, 0, 1, 0),
+                Font = UIConfig.Font,
+                Text = Name,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local BindBtn = Create("TextButton", {
+                Parent = Frame,
+                BackgroundColor3 = Color3.fromRGB(30, 41, 59),
+                Position = UDim2.new(1, -85, 0.5, -9),
+                Size = UDim2.new(0, 80, 0, 18),
+                Font = UIConfig.Font,
+                Text = Value.Name,
+                TextColor3 = UIConfig.AccentColor,
+                TextSize = UIConfig.FontSizeMain,
+                AutoButtonColor = true
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = BindBtn})
+
+            local Listening = false
+
+            BindBtn.MouseButton1Click:Connect(function()
+                Listening = true
+                BindBtn.Text = "..."
+            end)
+
+            UserInputService.InputBegan:Connect(function(input)
+                if Listening then
+                    if input.UserInputType == Enum.UserInputType.Keyboard then
+                        Value = input.KeyCode
+                        BindBtn.Text = Value.Name
+                        Listening = false
+                        if Flag then Library.Flags[Flag] = Value end
+                        Callback(Value)
+                    elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+                         Listening = false
+                         BindBtn.Text = Value.Name
+                    end
+                elseif not Listening and input.UserInputType == Enum.UserInputType.Keyboard then
+                    if input.KeyCode == Value then
+                        Callback()
+                    end
+                end
+            end)
+            
+            if Flag then Library.Flags[Flag] = Value end
+        end
+
+        function TabObj:CreateStatusLabel(opts)
+            local Name = opts.Name or opts.Label
+            local ValueText = opts.Value or "..."
+            
+            local Frame = Create("Frame", {
+                Parent = TabFrame,
+                BackgroundColor3 = UIConfig.CardColor,
+                BackgroundTransparency = 0.4,
+                Size = UDim2.new(1, 0, 0, UIConfig.ElementHeight)
+            })
+            Create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Frame})
+            Create("UIStroke", {Color = UIConfig.BorderColor, Thickness = 1, Parent = Frame})
+            
+            local Label = Create("TextLabel", {
+                Parent = Frame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 6, 0, 0),
+                Size = UDim2.new(0.5, 0, 1, 0),
+                Font = UIConfig.Font,
+                Text = Name,
+                TextColor3 = UIConfig.TextColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+            
+            local ValueLabel = Create("TextLabel", {
+                Parent = Frame,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0.5, 0, 0, 0),
+                Size = UDim2.new(0.5, -6, 1, 0),
+                Font = UIConfig.FontBold,
+                Text = ValueText,
+                TextColor3 = UIConfig.AccentColor,
+                TextSize = UIConfig.FontSizeMain,
+                TextXAlignment = Enum.TextXAlignment.Right
+            })
+            
+            local Obj = {}
+            function Obj:SetValue(val)
+                ValueLabel.Text = tostring(val)
+            end
+            return Obj
+        end
+
+        return TabObj
+    end
+
+    
+    function WindowObj:Toggle()
+        MainFrame.Visible = not MainFrame.Visible
+    end
+
+    function WindowObj:Notify(opts)
+        Library:Notify(opts)
+    end
+
+    return WindowObj
+end
+
+function Library:Notify(options)
+    local Title = options.Title or "Notification"
+    local Content = options.Content or ""
+    local Duration = options.Duration or 3
+
+    local NotifGui = CoreGui:FindFirstChild("ArexansNotifs")
+    if not NotifGui then
+        NotifGui = Create("ScreenGui", {Name="ArexansNotifs", Parent=CoreGui, ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+    end
+    
+    local Frame = Create("Frame", {
+        Parent = NotifGui,
+        BackgroundColor3 = UIConfig.CardColor,
+        BackgroundTransparency = 0.2, -- More transparent
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, 10, 1, -80),
+        Size = UDim2.new(0, 180, 0, 40), -- Extra Small
+        ClipsDescendants = true
+    })
+    Create("UICorner", {CornerRadius=UDim.new(0,4), Parent=Frame})
+    Create("UIStroke", {Color=UIConfig.AccentColor, Thickness=1, Parent=Frame})
+    
+    Create("TextLabel", {
+        Parent = Frame,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 6, 0, 2),
+        Size = UDim2.new(1, -12, 0, 12),
+        Font = UIConfig.FontBold,
+        Text = Title,
+        TextColor3 = UIConfig.AccentColor,
+        TextSize = 10, -- Smaller
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+    
+    Create("TextLabel", {
+        Parent = Frame,
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 6, 0, 14),
+        Size = UDim2.new(1, -12, 0, 20),
+        Font = UIConfig.Font,
+        Text = Content,
+        TextColor3 = UIConfig.TextColor,
+        TextSize = 9, -- Smaller
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextWrapped = true
+    })
+
+    -- Animate
+    local count = 0
+    for _, c in ipairs(NotifGui:GetChildren()) do if c~=Frame then count = count + 1 end end
+    local targetY = -60 - (count * 45)
+    
+    Frame.Position = UDim2.new(1, 10, 1, targetY)
+    TweenService:Create(Frame, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {Position = UDim2.new(1, -190, 1, targetY)}):Play()
+    
+    task.delay(Duration, function()
+        TweenService:Create(Frame, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {Position = UDim2.new(1, 10, 1, targetY)}):Play()
+        task.wait(0.5)
+        Frame:Destroy()
+    end)
+end
+
+
+
+
+
+local function PurchasePotion(potionId, amount, opts)
+        amount = amount or 1
+        opts = opts or {}
+        local silent = opts.silent
+
+        if not ProximityPurchaseRF then
+            if not silent then
+                SafeNotify({
+                    Title = "Auto Potion",
+                    Description = "Purchase remote not found.",
+                    Type = "Error",
+                })
+            end
+            return
+        end
+
+        local ok, result = pcall(function()
+            return ProximityPurchaseRF:InvokeServer(potionId, amount)
+        end)
+
+        if not ok then
+            warn("[ArexansTools][AutoPotion] Purchase failed:", result)
+            if not silent then
+                SafeNotify({
+                    Title = "Auto Potion",
+                    Description = "Purchase failed: " .. tostring(result),
+                    Type = "Error",
+                })
+            end
+            return
+        end
+
+        if not silent then
+            SafeNotify({
+                Title = "Auto Potion",
+                Description = string.format("Purchased %s x%d", tostring(potionId), amount),
+                Type = "Success",
+            })
+        end
+    end
+
+    local function UsePotion(potionId, opts)
+        opts = opts or {}
+        local silent = opts.silent
+
+        if not ToolActivatedRF then
+            if not silent then
+                SafeNotify({
+                    Title = "Auto Potion",
+                    Description = "ToolActivated remote not found.",
+                    Type = "Error",
+                })
+            end
+            return
+        end
+
+        local ok, result = pcall(function()
+            return ToolActivatedRF:InvokeServer(potionId)
+        end)
+
+        if not ok then
+            warn("[ArexansTools][AutoPotion] Use failed:", result)
+            if not silent then
+                SafeNotify({
+                    Title = "Auto Potion",
+                    Description = "Use failed: " .. tostring(result),
+                    Type = "Error",
+                })
+            end
+            return
+        end
+
+        if not silent then
+            SafeNotify({
+                Title = "Auto Potion",
+                Description = string.format("Used %s", tostring(potionId)),
+                Type = "Success",
+            })
+        end
+    end
+
+    
+    local Window = Library:CreateWindow({
+        Name = "ArexansTools - The Forge",
+        Subtitle = "Auto Mine / Forge / Combat",
+        ScriptName = "ArexansTools_TheForge",
+        Version = "v0.2.0",
+    })
+
+    local MainTab   = Window:AddTab(" Main")
+    local FarmTab   = Window:AddTab(" Farm")
+    local PotionTab = Window:AddTab(" Auto Potion")
+    local MiscTab   = Window:AddTab(" Misc")
+    local ShopTab   = Window:AddTab(" Teleport")
+    local RaceTab   = Window:AddTab(" Race")
+    local KeyTab    = Window:AddTab(" Keybinds")
+
+    local Flags = {
+        AutoMine   = false,
+        MineAll    = false,
+        MineTarget = nil,
+        AutoKill   = false,
+        MobTarget  = nil,
+        AutoForge  = false,
+        AutoSellOres = false,
+        KillNearbyWhileMining = false,
+        AutoHopOnNearbyPlayer = false,
+    }
+
+    local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+    local ORE_FOLDER_NAMES = { "Ore", "Rocks" }
+
+    local function GetPotionDurationSeconds(potionId)
+        local playerGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            return nil
+        end
+        local hotbar = playerGui:FindFirstChild("Hotbar")
+        if not hotbar then
+            return nil
+        end
+        local perks = hotbar:FindFirstChild("Perks")
+        if not perks then
+            return nil
+        end
+        local perk = perks:FindFirstChild(potionId)
+        if not perk then
+            return nil
+        end
+        local durationLabel = perk:FindFirstChild("Duration")
+        if not durationLabel or not durationLabel:IsA("TextLabel") then
+            return nil
+        end
+        local text = durationLabel.Text
+        if type(text) ~= "string" or text == "" then
+            return nil
+        end
+        local m, s = text:match("^(%d+):(%d+)")
+        if not m or not s then
+            return nil
+        end
+        local mm = tonumber(m)
+        local ss = tonumber(s)
+        if not mm or not ss then
+            return nil
+        end
+        return mm * 60 + ss
+    end
+
+    local noclipConnection
+    local originalCollision = {}
+    local miningHoverBodyVelocity = nil
+    local miningHoverBodyGyro = nil
+
+    local attackOffset = nil
+
+    local function getOreRoot()
+        
+        local rocks = workspace:FindFirstChild("Rocks")
+        if rocks then
+            return rocks
+        end
+
+        for _, name in ipairs(ORE_FOLDER_NAMES) do
+            local folder = workspace:FindFirstChild(name)
+            if folder then
+                return folder
+            end
+        end
+
+        return workspace
+    end
+
+    local function getCharacter()
+        local char = LocalPlayer and LocalPlayer.Character
+        if not char then
+            return nil
+        end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            return nil
+        end
+        return char, hrp
+    end
+
+    local function stepMoveTo(hrp, targetPos, lookAtPos)
+        if not hrp or typeof(targetPos) ~= "Vector3" then
+            return
+        end
+
+        if StepMoveBusy then
+            return
+        end
+        StepMoveBusy = true
+
+        local ok, err = pcall(function()
+            local POS_EPS = 1
+            local FAR_THRESHOLD = 70
+            local FAR_STEP = 70
+            local FAR_WAIT = 1
+            local NEAR_MAX_STEP = 9999
+            local NEAR_WAIT = 0
+
+            local current = hrp.Position
+            local dirVec = targetPos - current
+            local dist = dirVec.Magnitude
+            if dist < POS_EPS then
+                local lookPos = lookAtPos or (current + hrp.CFrame.LookVector)
+                hrp.CFrame = CFrame.lookAt(current, lookPos)
+                return
+            end
+
+            local dir = dirVec.Unit
+
+            if dist > FAR_THRESHOLD then
+                local remaining = dist
+                while remaining > POS_EPS do
+                    local stepDist = math.min(FAR_STEP, remaining)
+                    current = current + dir * stepDist
+                    remaining = remaining - stepDist
+
+                    local lookPos = lookAtPos or (current + hrp.CFrame.LookVector)
+                    hrp.CFrame = CFrame.lookAt(current, lookPos)
+
+                    if remaining > POS_EPS then
+                        task.wait(FAR_WAIT)
+                    end
+                end
+            else
+                local steps = math.max(1, math.ceil(dist / NEAR_MAX_STEP))
+                local stepSize = dist / steps
+
+                for _ = 1, steps do
+                    current = current + dir * stepSize
+                    local lookPos = lookAtPos or (current + hrp.CFrame.LookVector)
+                    hrp.CFrame = CFrame.lookAt(current, lookPos)
+                    task.wait(NEAR_WAIT)
+                end
+            end
+        end)
+
+        if not ok then
+            warn("[ArexansTools][stepMoveTo] move failed:", err)
+        end
+        StepMoveBusy = false
+    end
+
+    local function setNoclip(enabled)
+        if enabled then
+            if noclipConnection then
+                return
+            end
+
+            noclipConnection = RunService.Stepped:Connect(function()
+                local char = LocalPlayer.Character
+                if not char then
+                    return
+                end
+
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        if originalCollision[part] == nil then
+                            originalCollision[part] = true
+                        end
+                        part.CanCollide = false
+                    end
+                end
+            end)
+        else
+            if noclipConnection then
+                noclipConnection:Disconnect()
+                noclipConnection = nil
+            end
+
+            for part, wasCollide in pairs(originalCollision) do
+                if part and part.Parent then
+                    part.CanCollide = wasCollide
+                end
+            end
+            originalCollision = {}
+        end
+    end
+
+    local function setMiningHover(enabled)
+        local char, hrp = getCharacter()
+        if not hrp then
+            return
+        end
+
+        if enabled then
+            if not miningHoverBodyVelocity or miningHoverBodyVelocity.Parent ~= hrp then
+                if miningHoverBodyVelocity then
+                    miningHoverBodyVelocity:Destroy()
+                end
+
+                local bv = Instance.new("BodyVelocity")
+                bv.Name = "ArexansMiningHover"
+                bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+                bv.Velocity = Vector3.new(0, 0, 0)
+                miningHoverBodyVelocity = bv
+                miningHoverBodyVelocity.Parent = hrp
+            else
+                miningHoverBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+            end
+
+            if not miningHoverBodyGyro or miningHoverBodyGyro.Parent ~= hrp then
+                if miningHoverBodyGyro then
+                    miningHoverBodyGyro:Destroy()
+                end
+
+                local bg = Instance.new("BodyGyro")
+                bg.Name = "ArexansMiningLie"
+                bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+                bg.P = 1e4
+                bg.CFrame = hrp.CFrame * CFrame.Angles(0, 0, math.rad(90))
+                miningHoverBodyGyro = bg
+                miningHoverBodyGyro.Parent = hrp
+            else
+                miningHoverBodyGyro.CFrame = hrp.CFrame * CFrame.Angles(0, 0, math.rad(90))
+            end
+        else
+            if miningHoverBodyVelocity then
+                miningHoverBodyVelocity:Destroy()
+                miningHoverBodyVelocity = nil
+            end
+            if miningHoverBodyGyro then
+                miningHoverBodyGyro:Destroy()
+                miningHoverBodyGyro = nil
+            end
+        end
+    end
+
+    local function getOrePosition(ore)
+        if ore:IsA("Model") then
+            local bestPart
+            local okScan = pcall(function()
+                for _, d in ipairs(ore:GetDescendants()) do
+                    if d:IsA("BasePart") then
+                        if not bestPart or d.Size.Magnitude > bestPart.Size.Magnitude then
+                            bestPart = d
+                        end
+                    end
+                end
+            end)
+            if okScan and bestPart then
+                return bestPart.Position
+            end
+            if ore.PrimaryPart then
+                return ore.PrimaryPart.Position
+            end
+            local ok, cf = pcall(function()
+                return ore:GetPivot()
+            end)
+            if ok and cf then
+                return cf.Position
+            end
+        elseif ore:IsA("BasePart") then
+            return ore.Position
+        end
+        return nil
+    end
+
+    local function isOreDepleted(ore)
+        local ok, descendants = pcall(function()
+            return ore:GetDescendants()
+        end)
+        if not ok or not descendants then
+            return false
+        end
+
+        for _, d in ipairs(descendants) do
+            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                local text = string.lower(d.Text or "")
+                if string.find(text, "hp", 1, true) then
+                    local numStr = string.match(text, "([%d%.]+)")
+                    local hpValue = numStr and tonumber(numStr) or nil
+                    if hpValue ~= nil and hpValue <= 0.1 then
+                        return true
+                    end
+                end
+            end
+        end
+
+        return false
+    end
+
+    local function getOreDisplayName(obj)
+        if not obj then
+            return nil
+        end
+
+        if obj:IsA("BasePart") then
+            local parent = obj.Parent
+            if parent and parent:IsA("Model") and parent.Name ~= "SpawnLocation" then
+                return parent.Name
+            end
+        end
+
+        return obj.Name
+    end
+
+    local function getAttackPosition(orePos, hrpPos)
+        local dirVec = orePos - hrpPos
+        local dist = dirVec.Magnitude
+        local dir = dist > 0 and dirVec.Unit or Vector3.new(0, 0, -1)
+        local horizontalBack = 1.25
+        local target = orePos - dir * horizontalBack
+        target = target - Vector3.new(0, 8, 0)
+        return target
+    end
+
+    local function findNearestOreByName(name, maxDistance)
+        local root = getOreRoot()
+        if not root then
+            return nil
+        end
+
+        local _, hrp = getCharacter()
+        if not hrp then
+            return nil
+        end
+
+        if maxDistance == nil then
+            maxDistance = math.huge
+        end
+
+        local closest
+        local bestDist = maxDistance
+
+        local function scan(folder)
+            for _, obj in ipairs(folder:GetChildren()) do
+                if obj:IsA("Folder") then
+                    scan(obj)
+                elseif obj:IsA("BasePart") and obj.Name == "SpawnLocation" then
+                    scan(obj)
+                elseif obj:IsA("BasePart") or obj:IsA("Model") then
+                    local displayName = getOreDisplayName(obj)
+                    if (Flags.MineAll or not name or displayName == name) and not isOreDepleted(obj) then
+                        local pos = getOrePosition(obj)
+                        if pos then
+                            local d = (pos - hrp.Position).Magnitude
+                            if d < bestDist then
+                                bestDist = d
+                                closest = obj
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        scan(root)
+        return closest, bestDist
+    end
+
+    local function buildOreListFromWorld()
+        local root = getOreRoot()
+        if not root then
+            return {}
+        end
+
+        local namesMap = {}
+        local list = {}
+
+        local function scanNames(folder)
+            for _, obj in ipairs(folder:GetChildren()) do
+                if obj:IsA("Folder") then
+                    scanNames(obj)
+                elseif obj:IsA("BasePart") and obj.Name == "SpawnLocation" then
+                    scanNames(obj)
+                elseif obj:IsA("BasePart") or obj:IsA("Model") then
+                    if not isOreDepleted(obj) then
+                        local name = getOreDisplayName(obj)
+                        if name and not namesMap[name] then
+                            namesMap[name] = true
+                            table.insert(list, name)
+                        end
+                    end
+                end
+            end
+        end
+
+        pcall(scanNames, root)
+        return list
+    end
+
+    local function getLivingRoot()
+        local living = workspace:FindFirstChild("Living")
+        if living then
+            return living
+        end
+        return workspace
+    end
+
+    local function getMobType(model)
+        if not model or not model:IsA("Model") then
+            return nil
+        end
+
+        if Players:GetPlayerFromCharacter(model) then
+            return nil
+        end
+
+        local name = model.Name or ""
+        local prefix = string.match(name, "^(.-)%d") or name
+        prefix = prefix:gsub("%s+$", "")
+        if prefix == "" then
+            prefix = name
+        end
+        return prefix
+    end
+
+    local function buildMobListFromWorld()
+        local root = getLivingRoot()
+        if not root then
+            return {}
+        end
+
+        local namesMap = {}
+        local list = {}
+
+        for _, model in ipairs(root:GetChildren()) do
+            if model:IsA("Model") then
+                local mobType = getMobType(model)
+                if mobType and not namesMap[mobType] then
+                    namesMap[mobType] = true
+                    table.insert(list, mobType)
+                end
+            end
+        end
+
+        return list
+    end
+
+    local function findNearestMobByType(mobType, maxDistance)
+        local root = getLivingRoot()
+        if not root then
+            return nil
+        end
+
+        local _, hrp = getCharacter()
+        if not hrp then
+            return nil
+        end
+
+        if maxDistance == nil then
+            maxDistance = math.huge
+        end
+
+        local closest
+        local closestHRP
+        local bestDist = maxDistance
+
+        for _, model in ipairs(root:GetChildren()) do
+            if model:IsA("Model") and not Players:GetPlayerFromCharacter(model) then
+                local humanoid = model:FindFirstChildOfClass("Humanoid")
+                local targetHRP = model:FindFirstChild("HumanoidRootPart")
+                if humanoid and humanoid.Health > 0 and targetHRP then
+                    local t = getMobType(model)
+                    if not mobType or t == mobType then
+                        local d = (targetHRP.Position - hrp.Position).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            closest = model
+                            closestHRP = targetHRP
+                        end
+                    end
+                end
+            end
+        end
+
+        return closest, closestHRP, bestDist
+    end
+
+    local OreList = buildOreListFromWorld()
+    if #OreList == 0 then
+        OreList = {
+            "Copper Ore",
+            "Iron Ore",
+            "Silver Ore",
+            "Gold Ore",
+        }
+    end
+
+    local MobList = buildMobListFromWorld()
+    if #MobList == 0 then
+        MobList = { "Zombie" }
+    end
+
+    local function buildProximityNpcList()
+        local folder = workspace:FindFirstChild("Proximity")
+        if not folder then
+            return {}
+        end
+
+        local names = {}
+        local seen = {}
+
+        for _, inst in ipairs(folder:GetChildren()) do
+            if inst:IsA("Model") and inst:FindFirstChildOfClass("Humanoid") then
+                local name = inst.Name
+                if name and not seen[name] then
+                    seen[name] = true
+                    table.insert(names, name)
+                end
+            end
+        end
+
+        table.sort(names)
+        return names
+    end
+
+    local TeleportNpcList = buildProximityNpcList()
+    if #TeleportNpcList == 0 then
+        TeleportNpcList = { "Greedy Cey" }
+    end
+
+    local SelectedTeleportNpc = TeleportNpcList[1]
+    local PotionShopNpcName = "Maria"
+
+    local function SafeNotify(opts)
+        Window:Notify({
+            Name = opts.Title or "ArexansTools",
+            Description = opts.Description or "",
+            Type = opts.Type or "Info",
+            Duration = opts.Duration or 3,
+        })
+    end
+
+    local RaceTargetKeySet = {}
+    local RaceTargetDisplays = {}
+    local RaceAutoLimited = false
+    local RaceAutoFull = false
+    local RaceAutoSession = 0
+    local RaceMaxSpins = 10
+
+    local function HasRaceTargets()
+        for _ in pairs(RaceTargetKeySet) do
+            return true
+        end
+        return false
+    end
+
+    local function IsTargetRace(key)
+        return key ~= nil and RaceTargetKeySet[key] == true
+    end
+
+    local function GetRaceTargetSummary()
+        if not RaceTargetDisplays or #RaceTargetDisplays == 0 then
+            return nil
+        end
+        if #RaceTargetDisplays == 1 then
+            return RaceTargetDisplays[1]
+        end
+        return table.concat(RaceTargetDisplays, ", ")
+    end
+
+    local RaceInfoStatus
+    local RaceSpinsStatus
+    local AutoRerollLimitedToggle
+    local AutoRerollFullToggle
+
+    local function UpdateRaceUI()
+        if not RaceInfoStatus or not RaceSpinsStatus then
+            return
+        end
+
+        local snap = GetRaceSnapshot()
+        if not snap then
+            RaceInfoStatus:SetValue("Current Race: N/A")
+            RaceSpinsStatus:SetValue("Spins: N/A")
+            return
+        end
+
+        local raceName = snap.name
+        local rarity = snap.rarity
+        local spins = snap.spins
+
+        if type(raceName) ~= "string" then
+            if raceName == nil then
+                raceName = "Unknown"
+            else
+                raceName = "Unknown"
+            end
+        end
+
+        if type(rarity) ~= "string" then
+            rarity = "Unknown"
+        end
+
+        local spinsStr
+        if type(spins) == "number" or type(spins) == "string" then
+            spinsStr = tostring(spins)
+        else
+            spinsStr = "?"
+        end
+
+        RaceInfoStatus:SetValue(string.format("%s (%s)", raceName, rarity))
+        RaceSpinsStatus:SetValue("Spins: " .. spinsStr)
+    end
+
+    local function RaceRerollOnce(opts)
+        opts = opts or {}
+        local silent = opts.silent
+        local silentNoSpins = opts.silentNoSpins
+
+        if not RaceRerollRF then
+            if not silent then
+                SafeNotify({
+                    Name = "Race Reroll",
+                    Description = "Race Reroll remote not found.",
+                    Type = "Error",
+                })
+            end
+            return false, { reason = "NoRemote" }
+        end
+
+        local snap = GetRaceSnapshot()
+        if not snap then
+            if not silent then
+                SafeNotify({
+                    Name = "Race Reroll",
+                    Description = "Player data is not ready.",
+                    Type = "Error",
+                })
+            end
+            return false, { reason = "NoData" }
+        end
+
+        local beforeSpins = snap.spins or 0
+        if beforeSpins <= 0 then
+            if not silent and not silentNoSpins then
+                SafeNotify({
+                    Name = "Race Reroll",
+                    Description = "No spins left.",
+                    Type = "Error",
+                })
+            end
+            return false, { reason = "NoSpins", before = snap }
+        end
+
+        local beforeKey = snap.key
+
+        local ok, result = pcall(function()
+            return RaceRerollRF:InvokeServer()
+        end)
+
+        if not ok then
+            if not silent then
+                SafeNotify({
+                    Name = "Race Reroll",
+                    Description = "Invoke failed: " .. tostring(result),
+                    Type = "Error",
+                })
+            end
+            return false, { reason = "InvokeError", error = result }
+        end
+
+        local afterSnap = snap
+        local start = tick()
+        while tick() - start < 6 do
+            task.wait(0.2)
+            local s = GetRaceSnapshot()
+            if s then
+                afterSnap = s
+                if (s.spins or 0) ~= beforeSpins or s.key ~= beforeKey then
+                    break
+                end
+            end
+        end
+
+        UpdateRaceUI()
+
+        local used = math.max(0, beforeSpins - (afterSnap.spins or beforeSpins))
+
+        return true, {
+            before = snap,
+            after = afterSnap,
+            used = used,
+        }
+    end
+
+    local function RunRaceAutoLimited(sessionId)
+        local totalUsed = 0
+
+        while RaceAutoLimited and RaceAutoSession == sessionId do
+            local snap = GetRaceSnapshot()
+            if not snap then
+                break
+            end
+
+            local spins = snap.spins or 0
+            if spins <= 0 then
+                break
+            end
+
+            if RaceMaxSpins <= 0 then
+                break
+            end
+
+            if totalUsed >= RaceMaxSpins then
+                break
+            end
+
+            local ok, info = RaceRerollOnce({
+                silent = true,
+                silentNoSpins = true,
+            })
+
+            if not ok then
+                break
+            end
+
+            local used = info.used or 0
+            if used <= 0 then
+                break
+            end
+
+            totalUsed = totalUsed + used
+
+            if totalUsed >= RaceMaxSpins then
+                break
+            end
+
+            task.wait(0.5)
+        end
+
+        RaceAutoLimited = false
+        if AutoRerollLimitedToggle then
+            AutoRerollLimitedToggle:Set(false)
+        end
+
+        local finalSnap = GetRaceSnapshot()
+        local raceName = finalSnap and finalSnap.name or "Unknown"
+        local rarity = finalSnap and finalSnap.rarity or "Unknown"
+        local spins = finalSnap and finalSnap.spins or 0
+
+        SafeNotify({
+            Name = "Race Auto Reroll",
+            Description = string.format("Stopped. Used %d spins. Current race: %s (%s), Spins left: %d.", totalUsed, tostring(raceName), tostring(rarity), spins),
+            Type = "Info",
+        })
+    end
+
+    local function RunRaceAutoFull(sessionId)
+        local totalUsed = 0
+        local loops = 0
+
+        while RaceAutoFull and RaceAutoSession == sessionId do
+            local snap = GetRaceSnapshot()
+            if not snap then
+                break
+            end
+
+            local spins = snap.spins or 0
+            if spins <= 0 then
+                break
+            end
+
+            if IsTargetRace(snap.key) then
+                break
+            end
+
+            local ok, info = RaceRerollOnce({
+                silent = true,
+                silentNoSpins = true,
+            })
+
+            if not ok then
+                break
+            end
+
+            local used = info.used or 0
+            if used <= 0 then
+                break
+            end
+
+            totalUsed = totalUsed + used
+            loops = loops + 1
+
+            local afterSnap = info.after or GetRaceSnapshot()
+            if afterSnap and IsTargetRace(afterSnap.key) then
+                break
+            end
+
+            if loops >= 1000 then
+                break
+            end
+
+            task.wait(0.5)
+        end
+
+        RaceAutoFull = false
+        if AutoRerollFullToggle then
+            AutoRerollFullToggle:Set(false)
+        end
+
+        local finalSnap = GetRaceSnapshot()
+        local hitTarget = finalSnap and IsTargetRace(finalSnap.key)
+        local raceName = finalSnap and finalSnap.name or "Unknown"
+        local rarity = finalSnap and finalSnap.rarity or "Unknown"
+        local spins = finalSnap and finalSnap.spins or 0
+
+        SafeNotify({
+            Name = "Race Auto Reroll (Target)",
+            Description = hitTarget
+                and string.format("Stopped: reached target race %s (%s). Spins left: %d.", tostring(raceName), tostring(rarity), spins)
+                or string.format("Stopped: used %d spins. Current race: %s (%s), Spins left: %d.", totalUsed, tostring(raceName), tostring(rarity), spins),
+            Type = hitTarget and "Success" or "Info"
+        })
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            pcall(UpdateRaceUI)
+        end
+    end)
+
+    local EnsureSellDialogue
+    local AutoSellMovementLockUntil = 0
+    local AutoPotionMovementLockUntil = 0
+
+    local function DoAutoMine()
+        if not ToolActivatedRF then
+            return
+        end
+
+        if not Flags.MineAll and not Flags.MineTarget then
+            return
+        end
+
+        if AutoPotionBusy or AutoPotionNeedsAttention then
+            return
+        end
+
+        if os.clock() < AutoPotionMovementLockUntil then
+            return
+        end
+
+        if Flags.AutoSellOres and ProximityForceDialogueRF then
+            if not SellDialogueReady then
+                local ok = EnsureSellDialogue()
+                if not ok then
+                    return
+                end
+            end
+
+            if os.clock() < AutoSellMovementLockUntil then
+                return
+            end
+        end
+
+        if Flags.KillNearbyWhileMining then
+            local guardStart = tick()
+            while Flags.KillNearbyWhileMining do
+                local mob, mobHRP, mobDist = findNearestMobByType(nil, 5)
+                if not mob or not mobHRP or not mobDist or mobDist > 5 then
+                    break
+                end
+                local humanoid = mob:FindFirstChildOfClass("Humanoid")
+                if not humanoid or humanoid.Health <= 0 then
+                    break
+                end
+
+                local _, hrp = getCharacter()
+                if not hrp then
+                    return
+                end
+
+                local mobPos = mobHRP.Position
+
+                local backDir = -mobHRP.CFrame.LookVector
+                if backDir.Magnitude < 0.1 then
+                    local dir = mobPos - hrp.Position
+                    if dir.Magnitude > 0 then
+                        backDir = dir.Unit
+                    else
+                        backDir = Vector3.new(0, 0, -1)
+                    end
+                end
+
+                local distance = 4
+                local mobTarget = mobPos + backDir * distance
+                mobTarget = Vector3.new(mobTarget.X, mobPos.Y, mobTarget.Z)
+
+                stepMoveTo(hrp, mobTarget, mobPos)
+
+                local okKill, errKill = pcall(function()
+                    ToolActivatedRF:InvokeServer("Weapon")
+                end)
+
+                if not okKill then
+                    warn("[ArexansTools][AutoMine][Guard] Weapon invoke failed:", errKill)
+                end
+
+                if humanoid.Health <= 0 then
+                    break
+                end
+
+                if tick() - guardStart > 8 then
+                    break
+                end
+
+                task.wait(0.2)
+            end
+        end
+
+        local ore, dist = findNearestOreByName(Flags.MineTarget)
+        if not ore and Flags.MineTarget then
+            warn("[ArexansTools][AutoMine] No ore found for target", tostring(Flags.MineTarget), "- falling back to any ore")
+            ore, dist = findNearestOreByName(nil)
+        end
+        if not ore then
+            warn("[ArexansTools][AutoMine] No ores found in world this tick; skipping")
+            return
+        end
+
+        local _, hrp = getCharacter()
+        if not hrp then
+            return
+        end
+
+        local orePos = getOrePosition(ore)
+        if not orePos then
+            return
+        end
+
+        local targetPos = getAttackPosition(orePos, hrp.Position)
+        stepMoveTo(hrp, targetPos, orePos)
+
+        local posAfter = hrp.Position
+        local toOre = orePos - posAfter
+        if toOre.Magnitude > 0 then
+            local baseCf = CFrame.lookAt(posAfter, orePos)
+            hrp.CFrame = baseCf * CFrame.Angles(0, 0, math.rad(90))
+        end
+
+        local ok, err = pcall(function()
+            ToolActivatedRF:InvokeServer("Pickaxe")
+        end)
+
+        if not ok then
+            warn("[ArexansTools][AutoMine] Invoke failed:", err)
+            AutoPotionBusy = false
+        end
+    end
+
+    local function DoAutoKill()
+        if not ToolActivatedRF then
+            return
+        end
+
+        if not Flags.AutoKill then
+            return
+        end
+
+        local mob, mobHRP, dist = findNearestMobByType(Flags.MobTarget)
+        if not mob or not mobHRP then
+            return
+        end
+
+        local _, hrp = getCharacter()
+        if not hrp then
+            return
+        end
+
+        local mobPos = mobHRP.Position
+
+        local backDir = -mobHRP.CFrame.LookVector
+        if backDir.Magnitude < 0.1 then
+            local dir = mobPos - hrp.Position
+            if dir.Magnitude > 0 then
+                backDir = dir.Unit
+            else
+                backDir = Vector3.new(0, 0, -1)
+            end
+        end
+
+        local distance = 4
+        local target = mobPos + backDir * distance
+        target = Vector3.new(target.X, mobPos.Y, target.Z)
+
+        stepMoveTo(hrp, target, mobPos)
+
+        local ok, err = pcall(function()
+            ToolActivatedRF:InvokeServer("Weapon")
+        end)
+
+        if not ok then
+            warn("[ArexansTools][AutoKill] Invoke failed:", err)
+        end
+    end
+
+    local AutoSellKeepSet = {}
+    local lastSellDialogue = 0
+    local SellDialogueReady = false
+
+    local AutoPotionBuyEnabled = false
+    local AutoPotionUseEnabled = false
+    local AutoPotionBuyBatch = 0
+    local AutoPotionBuySet = {}
+    local AutoPotionUseSet = {}
+    local AutoPotionLastUse = {}
+    local PotionGoldCost = {
+        HealthPotion1 = 150,
+        AttackDamagePotion1 = 250,
+        MovementSpeedPotion1 = 200,
+        MinerPotion1 = 500,
+        LuckPotion1 = 350,
+    }
+    local AutoPotionLastGold = {}
+    local AutoPotionBusy = false
+    local AutoPotionNeedsAttention = false
+
+    EnsureSellDialogue = function()
+        if SellDialogueReady then
+            return true
+        end
+
+        if not ProximityForceDialogueRF then
+            return false
+        end
+
+        local now = tick()
+        if now - lastSellDialogue < 1 then
+            return false
+        end
+
+        local proxFolder = workspace:FindFirstChild("Proximity")
+        if not proxFolder then
+            return false
+        end
+
+        local greedy = proxFolder:FindFirstChild("Greedy Cey")
+        if not greedy then
+            return false
+        end
+
+        local ok, err = pcall(function()
+            if DialogueEventRE then
+                DialogueEventRE:FireServer("Opened")
+            end
+            ProximityForceDialogueRF:InvokeServer(greedy, "SellConfirmMisc")
+            if DialogueEventRE then
+                DialogueEventRE:FireServer("Closed")
+            end
+        end)
+
+        if not ok then
+            warn("[ArexansTools][AutoSell] EnsureSellDialogue failed:", err)
+            return false
+        end
+
+        lastSellDialogue = now
+        SellDialogueReady = true
+        AutoSellMovementLockUntil = os.clock() + 3
+        return true
+    end
+
+    local function BuildAutoSellBasket()
+        local inventory = GetPlayerInventory()
+        if not inventory then
+            return nil, 0, ""
+        end
+        if not OreIndexByName then
+            return nil, 0, ""
+        end
+
+        local basket = {}
+        local total = 0
+        local parts = {}
+        local hasSelection = false
+
+        for oreName in pairs(OreIndexByName) do
+            local have = tonumber(inventory[oreName]) or 0
+            if have > 0 then
+                local selected = AutoSellKeepSet[oreName]
+                if selected then
+                    hasSelection = true
+                end
+                local sellAmount = 0
+                if selected then
+                    sellAmount = have
+                end
+                if sellAmount and sellAmount > 0 then
+                    basket[oreName] = sellAmount
+                    total = total + sellAmount
+                    table.insert(parts, string.format("%s x%d", tostring(oreName), sellAmount))
+                end
+            end
+        end
+
+        table.sort(parts)
+        local detail = ""
+        if #parts > 0 then
+            if #parts > 6 then
+                local shown = {}
+                for i = 1, 6 do
+                    table.insert(shown, parts[i])
+                end
+                detail = table.concat(shown, ", ") .. string.format(" (+%d more)", #parts - 6)
+            else
+                detail = table.concat(parts, ", ")
+            end
+        end
+
+        if not hasSelection or total <= 0 then
+            return nil, 0, ""
+        end
+
+        return basket, total, detail
+    end
+
+    local function RunAutoSellOres(isManual)
+        if not DialogueRunCommandRF then
+            if isManual then
+                SafeNotify({
+                    Name = "Auto Sell Ores",
+                    Description = "Dialogue RunCommand remote not found.",
+                    Type = "Error",
+                })
+            end
+            return
+        end
+
+        if not SellDialogueReady then
+            local okDialogue = EnsureSellDialogue()
+            if not okDialogue and isManual then
+                SafeNotify({
+                    Name = "Auto Sell Ores",
+                    Description = "Please talk to Greedy Cey once at the stall before using Auto Sell.",
+                    Type = "Info",
+                })
+            end
+        end
+
+        local basket, total, detail = BuildAutoSellBasket()
+        if not basket or total <= 0 then
+            if isManual then
+                SafeNotify({
+                    Name = "Auto Sell Ores",
+                    Description = "No ores matched current auto-sell rules. Please select ores to SELL in the dropdown.",
+                    Type = "Info",
+                })
+            end
+            return
+        end
+
+        local ok, result = pcall(function()
+            return DialogueRunCommandRF:InvokeServer("SellConfirm", {
+                Basket = basket,
+            })
+        end)
+
+        if not ok then
+            SellDialogueReady = false
+            SafeNotify({
+                Name = "Auto Sell Ores",
+                Description = "SellConfirm failed: " .. tostring(result),
+                Type = "Error",
+            })
+            return
+        end
+
+        SellDialogueReady = true
+
+        local desc
+        if detail ~= "" then
+            desc = string.format("Sold %d ores: %s", total, detail)
+        else
+            desc = string.format("Sold %d ores.", total)
+        end
+
+        SafeNotify({
+            Name = "Auto Sell Ores",
+            Description = desc,
+            Type = "Success",
+        })
+    end
+
+    local function TeleportToNpc(npcName)
+        npcName = npcName or SelectedTeleportNpc
+        local _, hrp = getCharacter()
+        if not hrp then
+            SafeNotify({
+                Name = "Teleport",
+                Description = "Character not found",
+                Type = "Error",
+            })
+            return
+        end
+
+        local npcPos
+        local npcRoot
+        local proximityFolder = workspace:FindFirstChild("Proximity")
+        local npc = proximityFolder and npcName and proximityFolder:FindFirstChild(npcName)
+        if npc then
+            if npc:IsA("Model") then
+                local rootPart = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Torso") or npc.PrimaryPart
+                if rootPart then
+                    npcPos = rootPart.Position
+                    npcRoot = rootPart
+                else
+                    local ok, cf = pcall(function()
+                        return npc:GetPivot()
+                    end)
+                    if ok and cf then
+                        npcPos = cf.Position
+                    end
+                end
+            elseif npc:IsA("BasePart") then
+                npcPos = npc.Position
+            end
+        end
+
+        if not npcPos then
+            SafeNotify({
+                Name = "Teleport",
+                Description = "NPC not found: " .. tostring(npcName),
+                Type = "Error",
+            })
+            return
+        end
+
+        local target
+        if npcName == PotionShopNpcName and npcRoot then
+            local back = -npcRoot.CFrame.LookVector
+            target = npcPos + back * 3 + Vector3.new(0, 2, 0)
+        else
+            target = npcPos + Vector3.new(0, 2, 4)
+        end
+
+        stepMoveTo(hrp, target, npcPos)
+
+        SafeNotify({
+            Name = "Teleport",
+            Description = "Teleported to " .. tostring(npcName),
+            Type = "Success",
+        })
+    end
+
+    local function TeleportToPotionObject(potionId)
+        if not potionId or type(potionId) ~= "string" then
+            warn("[ArexansTools][AutoPotion] TeleportToPotionObject: invalid potionId", tostring(potionId))
+            return false
+        end
+
+        local _, hrp = getCharacter()
+        if not hrp then
+            warn("[ArexansTools][AutoPotion] TeleportToPotionObject: no HumanoidRootPart")
+            return false
+        end
+
+        local proxFolder = workspace:FindFirstChild("Proximity")
+        local potionRoot = workspace:FindFirstChild("Potion")
+        if potionRoot then
+            local nested = potionRoot:FindFirstChild("Proximity") or potionRoot
+            if nested then
+                proxFolder = nested
+            end
+        end
+
+        if not proxFolder then
+            warn("[ArexansTools][AutoPotion] TeleportToPotionObject: no Proximity folder found for potions")
+            return false
+        end
+
+        local inst = proxFolder:FindFirstChild(potionId)
+        if not inst then
+            warn("[ArexansTools][AutoPotion] TeleportToPotionObject: instance not found for", potionId)
+            return false
+        end
+
+        local pos
+        if inst:IsA("Model") then
+            local primary = inst.PrimaryPart or inst:FindFirstChild("HumanoidRootPart") or inst:FindFirstChild("RootPart") or inst:FindFirstChildOfClass("BasePart")
+            if primary then
+                pos = primary.Position
+            end
+        elseif inst:IsA("BasePart") then
+            pos = inst.Position
+        end
+
+        if not pos then
+            warn("[ArexansTools][AutoPotion] TeleportToPotionObject: could not resolve position for", inst:GetFullName())
+            return false
+        end
+
+        local target = pos + Vector3.new(0, 3, 0)
+        stepMoveTo(hrp, target, pos)
+
+        return true
+    end
+
+    local function ServerHopToLowerPlayer(fromAuto)
+        local placeId = game.PlaceId
+        local currentJobId = game.JobId
+
+        if not placeId or not currentJobId then
+            SafeNotify({
+                Name = "Server Hop",
+                Description = "PlaceId or JobId not available.",
+                Type = "Error",
+            })
+            return
+        end
+
+        local requestFunc
+        if syn and syn.request then
+            requestFunc = syn.request
+        elseif http and http.request then
+            requestFunc = http.request
+        elseif http_request then
+            requestFunc = http_request
+        elseif fluxus and fluxus.request then
+            requestFunc = fluxus.request
+        elseif request then
+            requestFunc = request
+        end
+
+        if not requestFunc then
+            SafeNotify({
+                Name = "Server Hop",
+                Description = "No supported HTTP request function found in this executor.",
+                Type = "Error",
+            })
+            return
+        end
+
+        local success, result = pcall(function()
+            local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(placeId)
+            local response = requestFunc({
+                Url = url,
+                Method = "GET",
+            })
+            if not response or not response.Body then
+                return nil
+            end
+            return HttpService:JSONDecode(response.Body)
+        end)
+
+        if not success or type(result) ~= "table" or type(result.data) ~= "table" then
+            warn("[ArexansTools][ServerHop] Failed to fetch server list:", result)
+            SafeNotify({
+                Name = "Server Hop",
+                Description = "Failed to fetch server list via HTTP.",
+                Type = "Warning",
+            })
+            return
+        end
+
+        local best = nil
+        for _, srv in ipairs(result.data) do
+            local id = srv.id
+            local playing = srv.playing
+            local maxPlayers = srv.maxPlayers
+            if id ~= currentJobId and type(playing) == "number" and type(maxPlayers) == "number" and playing < maxPlayers then
+                if not best or playing < best.playing then
+                    best = srv
+                end
+            end
+        end
+
+        if not best then
+            SafeNotify({
+                Name = "Server Hop",
+                Description = "No lower-population server found.",
+                Type = "Info",
+            })
+            return
+        end
+
+        local playing = best.playing or 0
+        local maxPlayers = best.maxPlayers or 0
+        local desc
+        if fromAuto then
+            desc = string.format("Auto hopping to lower-player server (%d/%d players).", playing, maxPlayers)
+        else
+            desc = string.format("Hopping to lower-player server (%d/%d players).", playing, maxPlayers)
+        end
+
+        SafeNotify({
+            Name = "Server Hop",
+            Description = desc,
+            Type = "Info",
+        })
+
+        TeleportService:TeleportToPlaceInstance(placeId, best.id, LocalPlayer)
+    end
+
+    local function GetPortalService()
+        local ok, result = pcall(function()
+            local shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 5)
+            if not shared then
+                return nil
+            end
+            local packages = shared:FindFirstChild("Packages") or shared:WaitForChild("Packages", 5)
+            if not packages then
+                return nil
+            end
+            local knitModule = packages:FindFirstChild("Knit") or packages:WaitForChild("Knit", 5)
+            if not knitModule then
+                return nil
+            end
+            local Knit = require(knitModule)
+            if not Knit or type(Knit.GetService) ~= "function" then
+                return nil
+            end
+            return Knit.GetService("PortalService")
+        end)
+        if not ok then
+            warn("[ArexansTools][Teleport] GetPortalService failed:", result)
+            return nil
+        end
+        return result
+    end
+
+    local minigameHookEnabled = false
+    local lastAutoForgeReset = 0
+
+    local function LegacyForgeMinigameAutomation()
+        if not ForgeServiceRF then
+            SafeNotify({
+                Name = "Auto Forge",
+                Description = "ForgeService RF not found!",
+                Type = "Error",
+            })
+            return
+        end
+        
+        if minigameHookEnabled then
+            return
+        end
+        
+        warn("[ArexansTools][AutoForge] LegacyForgeMinigameAutomation starting")
+        
+        local ok, err = pcall(function()
+            local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
+            if not PlayerGui then return end
+            
+            local ForgeUI = PlayerGui:FindFirstChild("Forge")
+            if not ForgeUI then 
+                warn("[ArexansTools][AutoForge] Forge UI not found, waiting...")
+                task.wait(2)
+                ForgeUI = PlayerGui:FindFirstChild("Forge")
+                if not ForgeUI then return end
+            end
+            
+            task.spawn(function()
+                local lastMinigame = nil
+                local completedMinigames = {}
+                
+                while true do
+                    task.wait(0.05)
+                    
+                    if not Flags.AutoForge then
+                        task.wait(0.5)
+                        continue
+                    end
+                    
+                    for _, minigameName in ipairs({"MeltMinigame", "PourMinigame", "HammerMinigame"}) do
+                        local minigame = ForgeUI:FindFirstChild(minigameName)
+                        if minigame and minigame.Visible then
+                            warn("[ArexansTools][AutoForge] Detected active minigame: " .. minigameName)
+                            if completedMinigames[minigameName] then
+                                task.wait(0.1)
+                                break
+                            end
+                            
+                            if lastMinigame ~= minigameName then
+                                lastMinigame = minigameName
+                            end
+                            
+                            if minigameName == "MeltMinigame" then
+                                local heater = minigame:FindFirstChild("Heater")
+                                local heaterTop = heater and heater:FindFirstChild("Top")
+                                local bar = minigame:FindFirstChild("Bar")
+                                local area = bar and bar:FindFirstChild("Area")
+                                
+                                if heater and heaterTop then
+                                    local UserInputService = game:GetService("UserInputService")
+                                    local savedConnections = {}
+                                    
+                                    for _, conn in pairs(getconnections(heaterTop.MouseButton1Down)) do
+                                        if conn.Enabled then
+                                            table.insert(savedConnections, conn)
+                                            conn:Disable()
+                                        end
+                                    end
+                                    
+                                    task.spawn(function()
+                                        local VIM = game:GetService("VirtualInputManager")
+                                        local moveUp = true
+                                        
+                                        task.wait(0.1)
+                                        for _, conn in pairs(getconnections(heaterTop.MouseButton1Down)) do
+                                            conn:Fire()
+                                        end
+                                        while minigame.Visible and Flags.AutoForge do
+                                            local heaterPos = heater.AbsolutePosition
+                                            local heaterSize = heater.AbsoluteSize
+                                            
+                                            local targetY
+                                            if moveUp then
+                                                targetY = heaterPos.Y + heaterSize.Y * 0.1
+                                                moveUp = false
+                                            else
+                                                targetY = heaterPos.Y + heaterSize.Y * 0.9
+                                                moveUp = true
+                                            end
+                                            
+                                            pcall(function()
+                                                VIM:SendMouseMoveEvent(heaterPos.X + heaterSize.X/2, targetY, game)
+                                            end)
+                                            
+                                            if area then
+                                                local progress = area.Size.Y.Scale
+                                                if progress >= 0.99 then
+                                                    break
+                                                end
+                                            end
+                                            
+                                            task.wait(0.12)
+                                        end
+                                        
+                                        for _, conn in pairs(getconnections(UserInputService.InputEnded)) do
+                                            pcall(function()
+                                                conn:Fire({
+                                                    UserInputType = Enum.UserInputType.MouseButton1
+                                                })
+                                            end)
+                                        end
+                                        
+                                        for _, conn in pairs(savedConnections) do
+                                            pcall(function()
+                                                conn:Enable()
+                                            end)
+                                        end
+                                    end)
+                                else
+                                    warn("[AutoForge] Heater not found!")
+                                end
+                                
+                                completedMinigames[minigameName] = true
+                                task.wait(0.2)
+                                
+                            elseif minigameName == "PourMinigame" then
+                                local frame = minigame:FindFirstChild("Frame")
+                                local area = frame and frame:FindFirstChild("Area")
+                                local line = frame and frame:FindFirstChild("Line")
+                                local timer = minigame:FindFirstChild("Timer")
+                                local timerBar = timer and timer:FindFirstChild("Bar")
+                                
+                                if area and line and timerBar then
+                                    task.spawn(function()
+                                        local VIM = game:GetService("VirtualInputManager")
+                                        local clickState = false
+                                        local lastToggle = 0
+                                        local minToggleInterval = 0.015
+
+                                        local function setHeld(wantHeld)
+                                            if clickState == wantHeld then
+                                                return
+                                            end
+
+                                            clickState = wantHeld
+
+                                            local absPos = line.AbsolutePosition
+                                            local absSize = line.AbsoluteSize
+                                            local cx = absPos.X + absSize.X / 2
+                                            local cy = absPos.Y + absSize.Y / 2
+
+                                            pcall(function()
+                                                VIM:SendMouseButtonEvent(cx, cy, 0, wantHeld, game, 0)
+                                            end)
+                                        end
+
+                                        while Flags.AutoForge and minigame.Visible do
+                                            local linePos = line.Position.Y.Scale
+                                            local areaPos = area.Position.Y.Scale
+                                            local areaSize = area.Size.Y.Scale
+                                            local areaTop = areaPos
+                                            local areaBottom = areaPos + areaSize
+                                            local areaCenter = (areaTop + areaBottom) * 0.5
+                                            local margin = (areaBottom - areaTop) * 0.15
+
+                                            local desiredState = clickState
+                                            if linePos > areaCenter + margin then
+                                                desiredState = true
+                                            elseif linePos < areaCenter - margin then
+                                                desiredState = false
+                                            end
+
+                                            if desiredState ~= clickState and (tick() - lastToggle) >= minToggleInterval then
+                                                lastToggle = tick()
+                                                setHeld(desiredState)
+                                            end
+
+                                            local progress = timerBar.Size.X.Scale
+                                            if progress >= 0.995 then
+                                                if clickState then
+                                                    setHeld(false)
+                                                end
+                                                break
+                                            end
+
+                                            task.wait(0.015)
+                                        end
+
+                                        if clickState then
+                                            setHeld(false)
+                                        end
+                                    end)
+                                else
+                                    warn("[AutoForge] Pour UI elements not found!")
+                                end
+                                
+                                completedMinigames[minigameName] = true
+                                task.wait(0.2)
+                                
+                            elseif minigameName == "HammerMinigame" then
+                                task.spawn(function()
+                                    task.wait(2)
+                                    
+                                    local mold = nil
+                                    for _, obj in ipairs(workspace.Debris:GetChildren()) do
+                                        if obj:FindFirstChild("bar") and obj:FindFirstChild("ClickDetector") then
+                                            mold = obj
+                                            break
+                                        end
+                                    end
+                                    
+                                    if mold then
+                                        for i = 1, 3 do
+                                            local clickDetector = mold:FindFirstChild("ClickDetector")
+                                            if clickDetector then
+                                                fireclickdetector(clickDetector)
+                                                task.wait(0.3)
+                                            end
+                                        end
+                                        
+                                        local VIM = game:GetService("VirtualInputManager")
+                                        local processedNotes = {}
+                                        
+                                        task.spawn(function()
+                                            while minigame.Visible and Flags.AutoForge do
+                                                for _, inst in ipairs(minigame:GetDescendants()) do
+                                                    if not processedNotes[inst] and inst:IsA("GuiButton") then
+                                                        local inner = inst:FindFirstChild("Frame")
+                                                        local circle = inner and inner:FindFirstChild("Circle")
+                                                        local border = inner and inner:FindFirstChild("Border")
+                                                        if inner and circle and border then
+                                                            processedNotes[inst] = true
+                                                            pcall(function()
+                                                                inst.Active = false
+                                                            end)
+                                                            task.spawn(function()
+                                                                local clicked = false
+                                                                local clickConns = {}
+
+                                                                if typeof(getconnections) == "function" then
+                                                                    pcall(function()
+                                                                        for _, conn in ipairs(getconnections(inst.MouseButton1Click)) do
+                                                                            if conn and conn.Enabled then
+                                                                                table.insert(clickConns, conn)
+                                                                            end
+                                                                        end
+                                                                    end)
+                                                                end
+
+                                                                local function fireNote()
+                                                                    if #clickConns > 0 then
+                                                                        for _, conn in ipairs(clickConns) do
+                                                                            pcall(function()
+                                                                                conn:Fire()
+                                                                            end)
+                                                                        end
+                                                                    else
+                                                                        local absPos = inst.AbsolutePosition
+                                                                        local absSize = inst.AbsoluteSize
+                                                                        local cx = absPos.X + absSize.X / 2
+                                                                        local cy = absPos.Y + absSize.Y / 2
+                                                                        pcall(function()
+                                                                            VIM:SendMouseMoveEvent(cx, cy, game)
+                                                                            task.wait(0.005)
+                                                                            VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                                                                            task.wait(0.015)
+                                                                            VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                                                                        end)
+                                                                    end
+                                                                end
+
+                                                                local perfectDelay = 0.11
+                                                                local maxWaitAfterGreen = 0.22
+
+                                                                while Flags.AutoForge and inst.Parent and not clicked do
+                                                                    local c = border.ImageColor3
+                                                                    if c.G > 0.9 and c.R < 0.2 then
+                                                                        clicked = true
+                                                                        if not Flags.AutoForge or not inst.Parent then
+                                                                            break
+                                                                        end
+
+                                                                        local start = tick()
+                                                                        while Flags.AutoForge and inst.Parent do
+                                                                            local elapsed = tick() - start
+                                                                            if elapsed >= perfectDelay or elapsed >= maxWaitAfterGreen then
+                                                                                break
+                                                                            end
+
+                                                                            local c2 = border.ImageColor3
+                                                                            if c2.G < 0.8 or c2.R > 0.3 then
+                                                                                break
+                                                                            end
+
+                                                                            task.wait()
+                                                                        end
+
+                                                                        fireNote()
+                                                                        break
+                                                                    end
+
+                                                                    task.wait()
+                                                                end
+                                                            end)
+                                                        end
+                                                    end
+                                                end
+                                                
+                                                task.wait(0.02)
+                                            end
+                                        end)
+                                    else
+                                        warn("[AutoForge] Hammer: Mold not found!")
+                                    end
+                                end)
+                                
+                                completedMinigames[minigameName] = true
+                                task.wait(0.3)
+                            end
+                            
+                            task.wait(0.1)
+                            break
+                        end
+                    end
+                    
+                    local hasActiveMinigame = false
+                    for _, minigameName in ipairs({"MeltMinigame", "PourMinigame", "HammerMinigame"}) do
+                        local mg = ForgeUI:FindFirstChild(minigameName)
+                        if mg and mg.Visible then
+                            hasActiveMinigame = true
+                            break
+                        end
+                    end
+                    
+                    if not hasActiveMinigame and lastMinigame then
+                        lastMinigame = nil
+                    end
+                end
+            end)
+            
+            minigameHookEnabled = true
+            SafeNotify({
+                Name = "Auto Forge",
+                Description = "Minigame automation enabled",
+                Type = "Success",
+            })
+        end)
+        
+        if not ok then
+            warn("[ArexansTools][AutoForge] Setup failed:", err)
+            SafeNotify({
+                Name = "Auto Forge",
+                Description = "Setup failed: " .. tostring(err),
+                Type = "Error",
+            })
+        end
+    end
+
+    local function AutoCompleteMinigame()
+        warn("[ArexansTools][AutoForge] AutoCompleteMinigame() called")
+        LegacyForgeMinigameAutomation()
+    end
+
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then
+            return
+        end
+
+        if not Flags.AutoForge then
+            return
+        end
+
+        local now = tick()
+        if now - lastAutoForgeReset < 1 then
+            return
+        end
+        lastAutoForgeReset = now
+
+        minigameHookEnabled = false
+        task.defer(AutoCompleteMinigame)
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(0.2)
+            if (Flags.AutoMine or Flags.MineAll) then
+                local ok, err = pcall(DoAutoMine)
+                if not ok then
+                    warn("[ArexansTools][AutoMine] DoAutoMine error:", err)
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(0.05)  -- เร็วขึ้น 4 เท่า (0.2 → 0.05)
+            if Flags.AutoKill then
+                pcall(DoAutoKill)
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(5)
+            if Flags.AutoSellOres then
+                pcall(RunAutoSellOres, false)
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(5)
+            if AutoPotionBuyEnabled or AutoPotionUseEnabled then
+                local inv = GetPlayerInventory()
+                if inv then
+                    local ok, err = pcall(function()
+                        AutoPotionNeedsAttention = false
+
+                        -- First pass: decide which potions should be bought this tick and compute total gold required
+                        local buyPlan = {}
+                        local totalNeedGold = 0
+                        local sharedGold = GetPlayerGold()
+
+                        for _, id in ipairs(PotionIdList) do
+                            local count = GetPotionCountFromInventory(inv, id)
+
+                            local wantsBuy = AutoPotionBuyEnabled and AutoPotionBuySet[id] or false
+                            local wantsUse = AutoPotionUseEnabled and AutoPotionUseSet[id] or false
+
+                            -- ตัดสินใจว่าจะไปซื้อรอบนี้ไหม
+                            local shouldBuyNow = false
+                            if wantsBuy and count <= 0 then
+                                if wantsUse then
+                                    -- ถ้าเปิด Auto-Use: รอให้บัพหมด/ใกล้หมดก่อนค่อยไปซื้อ
+                                    local remaining = GetPotionDurationSeconds(id)
+                                    if not remaining or remaining <= 1 then
+                                        shouldBuyNow = true
+                                    end
+                                else
+                                    -- ไม่ได้เปิด Auto-Use: แค่จำนวนขวด = 0 ก็พอให้ไปซื้อได้เลย
+                                    shouldBuyNow = true
+                                end
+                            end
+
+                            local batch = AutoPotionBuyBatch
+                            if not batch or batch <= 0 then
+                                batch = 1
+                            end
+
+                            buyPlan[id] = {
+                                count = count,
+                                wantsUse = wantsUse,
+                                shouldBuyNow = shouldBuyNow,
+                                batch = batch,
+                            }
+
+                            if shouldBuyNow and sharedGold then
+                                local knownCost = PotionGoldCost[id]
+                                if knownCost then
+                                    totalNeedGold = totalNeedGold + knownCost * batch
+                                end
+                            end
+
+                            -- ช่วง Auto-Use ปกติ (ใช้ซ้ำเมื่อบัพจะหมดหรือครบคูลดาวน์)
+                            if AutoPotionUseEnabled and AutoPotionUseSet[id] and count > 0 then
+                                local last = AutoPotionLastUse[id] or 0
+                                local now = tick()
+
+                                local remaining = GetPotionDurationSeconds(id)
+
+                                -- First-time use: if we never used this potion via Auto Potion
+                                -- and there's no active buff (or it's about to expire), use it immediately.
+                                if last <= 0 then
+                                    if not remaining or remaining <= 1 then
+                                        UsePotion(id, { silent = true })
+                                        AutoPotionLastUse[id] = now
+                                    end
+                                else
+                                    if remaining then
+                                        if remaining <= 1 and (now - last) >= 1 then
+                                            UsePotion(id, { silent = true })
+                                            AutoPotionLastUse[id] = now
+                                        end
+                                    else
+                                        local cd = PotionUseCooldowns[id] or 60
+                                        if now - last >= cd then
+                                            UsePotion(id, { silent = true })
+                                            AutoPotionLastUse[id] = now
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        local allowBuys = true
+                        if sharedGold and totalNeedGold > 0 then
+                            if sharedGold < totalNeedGold then
+                                allowBuys = false
+                            end
+                        end
+
+                        -- Second pass: perform buys for potions that shouldBuyNow, but only if we have enough gold for all of them
+                        local buySequence = {}
+                        if allowBuys then
+                            for _, id in ipairs(PotionIdList) do
+                                local plan = buyPlan[id]
+                                if plan and plan.shouldBuyNow then
+                                    local batch = plan.batch
+                                    local canBuy = true
+                                    local gold = sharedGold or GetPlayerGold()
+                                    if gold then
+                                        local knownCost = PotionGoldCost[id]
+                                        if knownCost then
+                                            local needGold = knownCost * batch
+                                            if gold < needGold then
+                                                canBuy = false
+                                            end
+                                        end
+                                    end
+
+                                    if canBuy then
+                                        table.insert(buySequence, {
+                                            id = id,
+                                            wantsUse = plan.wantsUse,
+                                            batch = plan.batch,
+                                            count = plan.count,
+                                        })
+                                    end
+                                end
+                            end
+                        end
+
+                        if #buySequence > 0 then
+                            local originCFrame = nil
+                            do
+                                local _, hrp = getCharacter()
+                                if hrp then
+                                    originCFrame = hrp.CFrame
+                                end
+                            end
+
+                            AutoPotionBusy = true
+                            AutoPotionNeedsAttention = true
+
+                            for _, entry in ipairs(buySequence) do
+                                local id = entry.id
+                                local wantsUse = entry.wantsUse
+                                local batch = entry.batch
+                                local count = entry.count
+
+                                -- เดินไปที่ขวดของ potion ปัจจุบัน
+                                local okTeleport = TeleportToPotionObject(id)
+                                if okTeleport then
+                                    AutoPotionMovementLockUntil = os.clock() + 3
+                                    task.wait(0.5)
+                                    inv = GetPlayerInventory() or inv
+                                    count = GetPotionCountFromInventory(inv, id)
+                                else
+                                    warn("[ArexansTools][AutoPotion] TeleportToPotionObject failed for", id)
+                                end
+
+                                -- ถ้ายังไม่มีขวดในกระเป๋าจริง ๆ ให้ลองกดซื้อจนได้จำนวนที่ต้องการ (batch)
+                                if count < batch then
+                                    local goldBefore = GetPlayerGold()
+                                    if goldBefore then
+                                        AutoPotionLastGold[id] = goldBefore
+                                    end
+
+                                    -- ยิง Remote ซื้อทีละ 1 ขวด แล้วเช็คจำนวนในกระเป๋าซ้ำ
+                                    -- เพื่อให้แน่ใจว่าถึงจำนวนที่ต้องการก่อนกลับไปขุด
+                                    local safetyAttempts = 0
+                                    local maxAttempts = batch * 2
+                                    if maxAttempts < 4 then
+                                        maxAttempts = 4
+                                    end
+
+                                    while count < batch and safetyAttempts < maxAttempts do
+                                        PurchasePotion(id, 1, { silent = true })
+                                        safetyAttempts += 1
+                                        task.wait(0.15)
+                                        inv = GetPlayerInventory() or inv
+                                        count = GetPotionCountFromInventory(inv, id)
+                                    end
+
+                                    local goldAfter = GetPlayerGold()
+
+                                    if goldBefore and goldAfter then
+                                        local delta = goldBefore - goldAfter
+                                        if delta > 0 then
+                                            local costPer = delta / math.max(1, batch)
+                                            PotionGoldCost[id] = costPer
+                                        else
+                                            warn("[ArexansTools][AutoPotion] Purchase for", id, "did not reduce gold (before=", goldBefore, "after=", goldAfter, ")")
+                                        end
+                                    end
+                                end
+
+                                -- ถ้าเปิด Auto-Use และมีขวดแล้ว ให้กินเลยหนึ่งครั้ง
+                                if wantsUse and count > 0 then
+                                    local nowUse = tick()
+                                    UsePotion(id, { silent = true })
+                                    AutoPotionLastUse[id] = nowUse
+                                end
+                            end
+
+                            if originCFrame then
+                                local _, hrpAfter = getCharacter()
+                                local hrpToUse = hrpAfter
+                                if hrpToUse and hrpToUse.Parent then
+                                    local originPos = originCFrame.Position
+                                    local lookPos = originPos + originCFrame.LookVector
+                                    stepMoveTo(hrpToUse, originPos, lookPos)
+                                end
+                            end
+
+                            AutoPotionMovementLockUntil = os.clock() + 3
+                            AutoPotionNeedsAttention = false
+                            AutoPotionBusy = false
+                        end
+                    end)
+
+                    if not ok then
+                        warn("[ArexansTools][AutoPotion] Loop error:", err)
+                    end
+                else
+                    warn("[ArexansTools][AutoPotion] GetPlayerInventory() returned nil; skipping auto potion tick")
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(2)
+
+            if not Flags.AutoHopOnNearbyPlayer then
+                continue
+            end
+
+            local _, hrp = getCharacter()
+            if not hrp then
+                continue
+            end
+
+            local myPos = hrp.Position
+            local tooClose = false
+
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local char = plr.Character
+                    local otherHrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if otherHrp then
+                        local dist = (otherHrp.Position - myPos).Magnitude
+                        if dist <= 10 then
+                            tooClose = true
+                            break
+                        end
+                    end
+                end
+            end
+
+            if tooClose then
+                ServerHopToLowerPlayer(true)
+                task.wait(10)
+            end
+        end
+    end)
+
+    MainTab:AddSection("Main Controls")
+
+    local ForgePreviewStatus = nil
+
+    local function RefreshForgePreview()
+        if not ForgePreviewStatus then
+            return
+        end
+
+        local status = "Waiting for Forge..."
+
+        pcall(function()
+            local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+            if not playerGui then
+                status = "Waiting for PlayerGui..."
+                return
+            end
+
+            local forgeGui = playerGui:FindFirstChild("Forge")
+            if not forgeGui or not forgeGui.Enabled then
+                status = "Forge closed"
+                return
+            end
+
+            local controllers = ReplicatedStorage:FindFirstChild("Controllers")
+            if not controllers then
+                return
+            end
+            local uiFolder = controllers:FindFirstChild("UIController")
+            if not uiFolder then
+                return
+            end
+            local forgeModuleScript = uiFolder:FindFirstChild("Forge")
+            if not forgeModuleScript then
+                return
+            end
+
+            local forgeModule = require(forgeModuleScript)
+            local selectedItemType = forgeModule.selectedItemType or "Unknown"
+            local ores = forgeModule.addedOres or {}
+
+            local oreParts = {}
+            local totalOres = 0
+            for oreName, count in pairs(ores) do
+                if type(count) == "number" and count > 0 then
+                    totalOres = totalOres + count
+                    table.insert(oreParts, string.format("%s x%d", tostring(oreName), count))
+                end
+            end
+            table.sort(oreParts)
+            local oresText = (#oreParts > 0) and table.concat(oreParts, ", ") or "No ores selected"
+
+            local multiplierText = "Multiplier: ?"
+            local oreSelect = forgeGui:FindFirstChild("OreSelect")
+            if oreSelect then
+                local forgeFrame = oreSelect:FindFirstChild("Forge")
+                if forgeFrame then
+                    local multLabel = forgeFrame:FindFirstChild("MultiplierLabel")
+                    if multLabel and multLabel:IsA("TextLabel") then
+                        multiplierText = multLabel.Text
+                    end
+                end
+            end
+
+            status = string.format("%s | %s | %s", selectedItemType, oresText, multiplierText)
+        end)
+
+        ForgePreviewStatus:SetValue(status)
+    end
+
+    local function AutoFillBestOres()
+        local function notify(desc, typeStr)
+            SafeNotify({
+                Name = "Forge Helper",
+                Description = desc,
+                Type = typeStr or "Info",
+            })
+        end
+
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            notify("PlayerGui not found.", "Error")
+            return
+        end
+
+        local forgeGui = playerGui:FindFirstChild("Forge")
+        if not forgeGui or not forgeGui.Enabled then
+            notify("Open the Forge UI (Select Ores) before using this.", "Info")
+            return
+        end
+
+        local oreSelect = forgeGui:FindFirstChild("OreSelect")
+        if not (oreSelect and oreSelect.Visible) then
+            notify("Please open the 'Select Ores' screen first.", "Info")
+            return
+        end
+
+        local controllers = ReplicatedStorage:FindFirstChild("Controllers")
+        if not controllers then
+            notify("Controllers folder not found.", "Error")
+            return
+        end
+        local uiFolder = controllers:FindFirstChild("UIController")
+        if not uiFolder then
+            notify("UIController not found.", "Error")
+            return
+        end
+        local forgeModuleScript = uiFolder:FindFirstChild("Forge")
+        if not forgeModuleScript then
+            notify("Forge UI module not found.", "Error")
+            return
+        end
+
+        local okModule, forgeModule = pcall(require, forgeModuleScript)
+        if not okModule or type(forgeModule) ~= "table" then
+            notify("Failed to load Forge UI module.", "Error")
+            return
+        end
+
+        if type(forgeModule.AddOre) ~= "function" or type(forgeModule.RemoveOre) ~= "function" then
+            notify("Forge module AddOre/RemoveOre not available.", "Error")
+            return
+        end
+
+        if not OreData or not OreIndexByName then
+            notify("Ore data not available.", "Error")
+            return
+        end
+
+        local inventory = GetPlayerInventory()
+        if not inventory then
+            notify("Failed to read player inventory.", "Error")
+            return
+        end
+
+        local function getTotalLumps()
+            local t = 0
+            local added = forgeModule.addedOres or {}
+            for _, count in pairs(added) do
+                if type(count) == "number" then
+                    t = t + count
+                end
+            end
+            return t
+        end
+
+        local function getLumpsFor(name)
+            local added = forgeModule.addedOres or {}
+            local v = added[name]
+            if type(v) == "number" then
+                return v
+            end
+            return 0
+        end
+
+        -- clear existing ores
+        local current = forgeModule.addedOres or {}
+        for oreName, count in pairs(current) do
+            local n = tonumber(count) or 0
+            for _ = 1, n do
+                pcall(function()
+                    forgeModule:RemoveOre(oreName)
+                end)
+            end
+        end
+
+        -- build candidate list from ores we actually own, sorted by Multiplier descending
+        local candidates = {}
+        for oreName, idx in pairs(OreIndexByName) do
+            local oreInfo = OreData[idx]
+            local mult = oreInfo and oreInfo.Multiplier or 0
+            local have = tonumber(inventory[oreName]) or 0
+            if mult > 0 and have > 0 then
+                table.insert(candidates, {
+                    Name = oreName,
+                    Score = mult,
+                    Have = have,
+                })
+            end
+        end
+
+        table.sort(candidates, function(a, b)
+            return (a.Score or 0) > (b.Score or 0)
+        end)
+
+        local targetTotal = 10
+        local addedAny = false
+
+        for _, cand in ipairs(candidates) do
+            while getTotalLumps() < targetTotal do
+                if getLumpsFor(cand.Name) >= cand.Have then
+                    break
+                end
+
+                local before = getTotalLumps()
+                local okAdd = pcall(function()
+                    forgeModule:AddOre(cand.Name)
+                end)
+                local after = getTotalLumps()
+                if not okAdd or after <= before then
+                    break
+                end
+                addedAny = true
+            end
+            if getTotalLumps() >= targetTotal then
+                break
+            end
+        end
+
+        local finalTotal = getTotalLumps()
+        if not addedAny or finalTotal <= 0 then
+            notify("No ores could be added. Check your inventory.", "Error")
+        else
+            notify(string.format("Applied best-guess ore mix (%d lumps). Review, then press FORGE manually.", finalTotal), "Success")
+        end
+
+        RefreshForgePreview()
+    end
+
+    spawn(function()
+        while true do
+            task.wait(0.5)
+            RefreshForgePreview()
+        end
+    end)
+
+    MainTab:AddSection("Auto Forge")
+
+    MainTab:AddButton({
+        Label = "Auto Select Best Ores",
+        Callback = AutoFillBestOres,
+    })
+
+    MainTab:AddToggle({
+        Label = "Auto Complete Minigames",
+        Key = "auto_forge",
+        Callback = function(value)
+            Flags.AutoForge = value
+            if value then
+                AutoCompleteMinigame()
+            end
+            SafeNotify({
+                Name = "Auto Forge",
+                Description = value and "Enabled - Minigames will be auto completed" or "Disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    MainTab:AddLabel("Enable before forging, then put ores and click Forge button.")
+    MainTab:AddLabel("The script will automatically click minigame buttons for you.")
+
+    PotionTab:AddSection("Auto Potion Controls")
+
+    local AutoPotionBuyDropdown = PotionTab:AddMultiDropdown({
+        Label = "Potions to Auto-Buy",
+        Key = "auto_potion_buy_list",
+        Options = PotionIdList,
+        Default = {},
+        Callback = function(selected)
+            AutoPotionBuySet = {}
+            if type(selected) == "table" then
+                for _, id in ipairs(selected) do
+                    AutoPotionBuySet[id] = true
+                end
+            end
+        end,
+    })
+
+    local AutoPotionUseDropdown = PotionTab:AddMultiDropdown({
+        Label = "Potions to Auto-Use",
+        Key = "auto_potion_use_list",
+        Options = PotionIdList,
+        Default = {},
+        Callback = function(selected)
+            AutoPotionUseSet = {}
+            if type(selected) == "table" then
+                for _, id in ipairs(selected) do
+                    AutoPotionUseSet[id] = true
+                end
+            end
+        end,
+    })
+
+    PotionTab:AddLabel("When a selected Auto-Buy potion runs out, this many will be purchased at once.")
+
+    PotionTab:AddTextBox({
+        Label = "Buy amount",
+        Key = "auto_potion_buy_batch",
+        Default = "0",
+        Placeholder = "e.g. 5",
+        Callback = function(text)
+            local n = tonumber(text)
+            if not n or n < 0 then
+                n = 0
+            end
+            AutoPotionBuyBatch = math.floor(n)
+        end,
+    })
+
+    PotionTab:AddToggle({
+        Label = "Enable Auto-Buy Potions",
+        Key = "auto_potion_buy",
+        Callback = function(value)
+            AutoPotionBuyEnabled = value
+            SafeNotify({
+                Name = "Auto Potion",
+                Description = value and "Auto-Buy enabled" or "Auto-Buy disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    PotionTab:AddToggle({
+        Label = "Enable Auto-Use Potions",
+        Key = "auto_potion_use",
+        Callback = function(value)
+            AutoPotionUseEnabled = value
+            SafeNotify({
+                Name = "Auto Potion",
+                Description = value and "Auto-Use enabled" or "Auto-Use disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    FarmTab:AddSection("Ore Settings")
+
+    local OreDropdown = FarmTab:AddDropdown({
+        Label = "Ore to Mine",
+        Key = "ore_target",
+        Options = OreList,
+        Default = OreList[1],
+        Callback = function(value)
+            Flags.MineTarget = value
+            SafeNotify({
+                Name = "Ore Target",
+                Description = "Now mining: " .. tostring(value),
+                Type = "Info",
+            })
+        end,
+    })
+
+    local AutoMineToggle = FarmTab:AddToggle({
+        Label = "AutoMine Selected Ore",
+        Key = "auto_mine_selected",
+        Callback = function(value)
+            Flags.AutoMine = value
+            if value then
+                Flags.MineAll = false
+                attackOffset = nil
+            end
+            local miningActive = Flags.AutoMine or Flags.MineAll
+            setNoclip(miningActive)
+            setMiningHover(miningActive)
+            SafeNotify({
+                Name = "Auto Mine (Selected)",
+                Description = value and "Enabled" or "Disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    local AutoMineAllToggle = FarmTab:AddToggle({
+        Label = "AutoMine All Ores",
+        Key = "auto_mine_all",
+        Callback = function(value)
+            Flags.MineAll = value
+            if value then
+                Flags.AutoMine = false
+                attackOffset = nil
+            end
+            local miningActive = Flags.AutoMine or Flags.MineAll
+            setNoclip(miningActive)
+            setMiningHover(miningActive)
+            SafeNotify({
+                Name = "Auto Mine (All)",
+                Description = value and "Enabled" or "Disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    local AutoMineGuardToggle = FarmTab:AddToggle({
+        Label = "Kill Nearby Mobs While Mining (5 studs)",
+        Key = "auto_mine_kill_nearby",
+        Callback = function(value)
+            Flags.KillNearbyWhileMining = value
+            SafeNotify({
+                Name = "Auto Mine Guard",
+                Description = value and "Enabled - Will kill nearby mobs while mining (<= 5 studs)." or "Disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    FarmTab:AddSection("Mob Settings")
+
+    local MobDropdown = FarmTab:AddDropdown({
+        Label = "Mob to Kill",
+        Key = "mob_target",
+        Options = MobList,
+        Default = MobList[1],
+        Callback = function(value)
+            Flags.MobTarget = value
+            SafeNotify({
+                Name = "Mob Target",
+                Description = "Now killing: " .. tostring(value),
+                Type = "Info",
+            })
+        end,
+    })
+
+    local AutoKillToggle = FarmTab:AddToggle({
+        Label = "AutoKill Selected Mob",
+        Key = "auto_kill_selected",
+        Callback = function(value)
+            Flags.AutoKill = value
+            SafeNotify({
+                Name = "Auto Kill",
+                Description = value and "Enabled" or "Disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    FarmTab:AddSection("Ore Auto-Sell")
+
+    local AutoSellKeepDropdown = FarmTab:AddMultiDropdown({
+        Label = "Ores to SELL",
+        Key = "auto_sell_keep_ores",
+        Options = AutoSellOreNameList,
+        Default = {},
+        Callback = function(selected)
+            AutoSellKeepSet = {}
+            AutoSellKeepList = {}
+            if type(selected) == "table" then
+                for _, name in ipairs(selected) do
+                    AutoSellKeepSet[name] = true
+                    table.insert(AutoSellKeepList, name)
+                end
+            end
+        end,
+    })
+
+    local AutoSellToggle = FarmTab:AddToggle({
+        Label = "Enable Auto-Sell while mining",
+        Key = "auto_sell_ores",
+        Callback = function(value)
+            Flags.AutoSellOres = value
+            SafeNotify({
+                Name = "Auto Sell Ores",
+                Description = value and "Enabled" or "Disabled",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    FarmTab:AddButton({
+        Label = "Sell now using current rules",
+        Callback = function()
+            RunAutoSellOres(true)
+        end,
+    })
+
+    ShopTab:AddSection("Teleport")
+
+    local TeleportDropdown = ShopTab:AddDropdown({
+        Label = "NPC to Teleport",
+        Key = "teleport_npc",
+        Options = TeleportNpcList,
+        Default = TeleportNpcList[1],
+        Callback = function(value)
+            SelectedTeleportNpc = value
+            SafeNotify({
+                Name = "Teleport",
+                Description = "Selected: " .. tostring(value),
+                Type = "Info",
+            })
+        end,
+    })
+
+    ShopTab:AddButton({
+        Label = "Teleport to NPC",
+        Callback = function()
+            TeleportToNpc(SelectedTeleportNpc)
+        end,
+    })
+
+    ShopTab:AddSection("Islands")
+
+    if IslandsData and type(IslandsData.Data) == "table" then
+        for _, islandInfo in ipairs(IslandsData.Data) do
+            local islandName = islandInfo and islandInfo.Name
+            if type(islandName) == "string" and islandName ~= "" then
+                ShopTab:AddButton({
+                    Label = "Teleport to " .. tostring(islandName),
+                    Callback = function()
+                        local portalService = GetPortalService()
+                        if not portalService then
+                            SafeNotify({
+                                Name = "Island Teleport",
+                                Description = "PortalService not available.",
+                                Type = "Error",
+                            })
+                            return
+                        end
+
+                        SafeNotify({
+                            Name = "Island Teleport",
+                            Description = "Teleporting to " .. tostring(islandName) .. "...",
+                            Type = "Info",
+                        })
+
+                        task.spawn(function()
+                            local ok, err = pcall(function()
+                                portalService:TeleportToIsland(islandName):await()
+                            end)
+                            if not ok then
+                                warn("[ArexansTools][IslandTeleport] TeleportToIsland failed for", islandName, err)
+                                SafeNotify({
+                                    Name = "Island Teleport",
+                                    Description = "Teleport failed: " .. tostring(err),
+                                    Type = "Error",
+                                })
+                            end
+                        end)
+                    end,
+                })
+            end
+        end
+    else
+        ShopTab:AddLabel("Island data not available. Open Teleport UI once, then re-run script.")
+    end
+
+    RaceTab:AddSection("Race Info")
+
+    RaceInfoStatus = RaceTab:AddStatusLabel({
+        Label = "Current Race",
+        Value = "Loading...",
+    })
+
+    RaceSpinsStatus = RaceTab:AddStatusLabel({
+        Label = "Spins",
+        Value = "Loading...",
+    })
+
+    RaceTab:AddSection("Target Race")
+
+    local TargetRaceMultiDropdown = RaceTab:AddMultiDropdown({
+        Label = "Target Race",
+        Key = "race_targets",
+        Options = RaceList,
+        Default = {},
+        Callback = function(selectedList)
+            -- selectedList คือ array ของชื่อ race ที่เลือกอยู่
+            RaceTargetKeySet = {}
+            RaceTargetDisplays = {}
+            if type(selectedList) == "table" then
+                for _, display in ipairs(selectedList) do
+                    local key = RaceNameToKey[display]
+                    if key then
+                        RaceTargetKeySet[key] = true
+                        table.insert(RaceTargetDisplays, display)
+                    end
+                end
+            end
+
+            local summary = GetRaceTargetSummary()
+            if summary then
+                SafeNotify({
+                    Name = "Race Targets",
+                    Description = "Target races set to: " .. summary,
+                    Type = "Info",
+                })
+            else
+                SafeNotify({
+                    Name = "Race Targets",
+                    Description = "Cleared all target races. Auto reroll will run until no spins left.",
+                    Type = "Info",
+                })
+            end
+        end,
+    })
+
+    RaceTab:AddButton({
+        Label = "Reroll Once",
+        Callback = function()
+            local ok, info = RaceRerollOnce({ silent = false })
+            if ok and info and info.after then
+                local snap = info.after
+                SafeNotify({
+                    Name = "Race Reroll",
+                    Description = string.format(
+                        "Now: %s (%s). Spins left: %d.",
+                        tostring(snap.name or "Unknown"),
+                        tostring(snap.rarity or "Unknown"),
+                        tonumber(snap.spins or 0)
+                    ),
+                    Type = "Success",
+                })
+            end
+        end,
+    })
+
+    RaceTab:AddSection("Auto Reroll (Limit)")
+
+    RaceTab:AddTextBox({
+        Label = "Max Spins to Use",
+        Key = "race_max_spins",
+        Default = tostring(RaceMaxSpins),
+        Placeholder = "10",
+        Callback = function(text)
+            local n = tonumber(text)
+            if not n or n <= 0 then
+                n = 1
+            end
+            n = math.floor(n)
+            RaceMaxSpins = n
+            SafeNotify({
+                Name = "Race Auto Reroll",
+                Description = "Max spins per run set to " .. tostring(n),
+                Type = "Info",
+            })
+        end,
+    })
+
+    AutoRerollLimitedToggle = RaceTab:AddToggle({
+        Label = "Auto Reroll (Use Max Spins)",
+        Key = "race_auto_limited",
+        Callback = function(value)
+            if value then
+                RaceAutoSession = RaceAutoSession + 1
+                RaceAutoLimited = true
+                task.spawn(RunRaceAutoLimited, RaceAutoSession)
+                SafeNotify({
+                    Name = "Race Auto Reroll",
+                    Description = string.format("Started limited auto reroll (max %d spins).", RaceMaxSpins),
+                    Type = "Success",
+                })
+            else
+                RaceAutoLimited = false
+                SafeNotify({
+                    Name = "Race Auto Reroll",
+                    Description = "Stopped limited auto reroll.",
+                    Type = "Info",
+                })
+            end
+        end,
+    })
+
+    RaceTab:AddSection("Auto Reroll (Target / All Spins)")
+
+    AutoRerollFullToggle = RaceTab:AddToggle({
+        Label = "Auto Reroll NoLimit",
+        Key = "race_auto_full",
+        Callback = function(value)
+            if value then
+                RaceAutoSession = RaceAutoSession + 1
+                RaceAutoFull = true
+                task.spawn(RunRaceAutoFull, RaceAutoSession)
+                local desc
+                local summary = GetRaceTargetSummary()
+                if summary and HasRaceTargets() then
+                    desc = "Started auto reroll until any target race or no spins left. Targets: " .. summary
+                else
+                    desc = "Started auto reroll until no spins left. (No target race selected)"
+                end
+                SafeNotify({
+                    Name = "Race Auto Reroll (Target)",
+                    Description = desc,
+                    Type = "Success",
+                })
+            else
+                RaceAutoFull = false
+                SafeNotify({
+                    Name = "Race Auto Reroll (Target)",
+                    Description = "Stopped auto reroll.",
+                    Type = "Info",
+                })
+            end
+        end,
+    })
+
+    pcall(UpdateRaceUI)
+
+    MiscTab:AddSection("Codes")
+
+    local KnownCodes = {
+        "100KLIKES",
+        "100K!",
+        "200K!",
+    }
+
+    local CurrentRedeemCode = ""
+
+    MiscTab:AddTextBox({
+        Label = "Code",
+        Key = "redeem_code_input",
+        Default = "",
+        Placeholder = "Enter code...",
+        Callback = function(text)
+            CurrentRedeemCode = text or ""
+        end,
+    })
+
+    MiscTab:AddButton({
+        Label = "Redeem Code",
+        Callback = function()
+            local code = (CurrentRedeemCode or ""):match("^%s*(.-)%s*$") or ""
+            if code == "" then
+                SafeNotify({
+                    Name = "Redeem Code",
+                    Description = "Please enter a code first.",
+                    Type = "Info",
+                })
+                return
+            end
+
+            if not RedeemCodeRF then
+                SafeNotify({
+                    Name = "Redeem Code",
+                    Description = "RedeemCode remote not found.",
+                    Type = "Error",
+                })
+                return
+            end
+
+            local ok, result = pcall(function()
+                return RedeemCodeRF:InvokeServer(code)
+            end)
+
+            if not ok then
+                SafeNotify({
+                    Name = "Redeem Code",
+                    Description = "Invoke failed: " .. tostring(result),
+                    Type = "Error",
+                })
+                return
+            end
+
+            local data = result
+            if type(data) == "table" and data[1] and type(data[1]) == "table" and data[1].Success ~= nil then
+                data = data[1]
+            end
+
+            local success = type(data) == "table" and data.Success
+            local message = type(data) == "table" and (data.Message or "") or ""
+            if success then
+                SafeNotify({
+                    Name = "Redeem Code",
+                    Description = message ~= "" and message or ("Code '" .. code .. "' redeemed successfully."),
+                    Type = "Success",
+                })
+            else
+                SafeNotify({
+                    Name = "Redeem Code",
+                    Description = message ~= "" and message or ("Code '" .. code .. "' failed."),
+                    Type = "Error",
+                })
+            end
+        end,
+    })
+
+    MiscTab:AddToggle({
+        Label = "Auto Redeem Code",
+        Key = "auto_redeem_codes",
+        Callback = function(value)
+            if not value then
+                return
+            end
+
+            if not RedeemCodeRF then
+                SafeNotify({
+                    Name = "Auto Redeem Code",
+                    Description = "RedeemCode remote not found.",
+                    Type = "Error",
+                })
+                return
+            end
+
+            for _, code in ipairs(KnownCodes) do
+                local ok, result = pcall(function()
+                    return RedeemCodeRF:InvokeServer(code)
+                end)
+
+                if not ok then
+                    SafeNotify({
+                        Name = "Auto Redeem Code",
+                        Description = string.format("[%s] Invoke failed: %s", tostring(code), tostring(result)),
+                        Type = "Error",
+                    })
+                else
+                    local data = result
+                    if type(data) == "table" and data[1] and type(data[1]) == "table" and data[1].Success ~= nil then
+                        data = data[1]
+                    end
+
+                    local success = type(data) == "table" and data.Success
+                    local message = type(data) == "table" and (data.Message or "") or ""
+
+                    SafeNotify({
+                        Name = "Auto Redeem Code",
+                        Description = string.format("[%s] %s", tostring(code), message ~= "" and message or (success and "Success" or "Failed")),
+                        Type = success and "Success" or "Error",
+                    })
+                end
+
+                task.wait(0.2)
+            end
+        end,
+    })
+
+    MiscTab:AddSection("Server Hop")
+
+    MiscTab:AddButton({
+        Label = "Server Hop: Lower Player",
+        Callback = function()
+            ServerHopToLowerPlayer(false)
+        end,
+    })
+
+    MiscTab:AddToggle({
+        Label = "Auto Hop if Player Nearby (<= 10 studs)",
+        Key = "auto_hop_nearby_player",
+        Callback = function(value)
+            Flags.AutoHopOnNearbyPlayer = value
+            SafeNotify({
+                Name = "Server Hop",
+                Description = value
+                    and "Auto hop enabled: will change server if another player comes within 10 studs."
+                    or "Auto hop disabled.",
+                Type = value and "Success" or "Info",
+            })
+        end,
+    })
+
+    KeyTab:AddSection("Keybinds")
+
+    KeyTab:AddLabel("Press keys below to toggle features quickly.")
+
+    KeyTab:AddKeybind({
+        Label = "Toggle UI Visibility",
+        Key = "toggle_ui",
+        Default = "V",
+        Callback = function()
+            Window:Toggle()
+        end,
+    })
+
+    SafeNotify({
+        Name = "ArexansTools - The Forge",
+        Description = "Loaded successfully. Configure options and start farming!",
+        Type = "Success",
+        Duration = 5,
+    })
+
+
